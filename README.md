@@ -14,7 +14,7 @@ Testlerinizi proje yapısında okunabilir **`.ferrite` DSL dosyaları** ile yaza
 - **CDP Domain Yönetimi (`crates/ferrite-cdp`)**: `Page`, `Target` (`autoAttach`) ve ref-counted `Network` + `Fetch` intercept domain'leri.
 - **Deterministik Locator Engine (`crates/ferrite-locator`)**: `Accessibility.getFullAXTree` üzerinden CSS'den bağımsız parmak iziyle kalıcı `@e1`, `@e2` referansları, `hover`, `dblclick`, `press`, `type` ve *self-healing*.
 - **Görsel Regresyon (`crates/ferrite-visual`)**: PNG decompression bomb koruması, YIQ renk farkı + 3x3 anti-aliasing dışlama (`pixelmatch`) + maskeleme.
-- **NPM Paketi (`npm/ferrite-e2e/`) & VS Code Eklentisi (`vscode-ferrite/`)**: `npx ferrite` başlatıcısı ve `.ferrite` sözdizimi renklendirmesi + kod parçacıkları (snippets).
+- **NPM Paketi (`@halil07/ferrite`, `npm/ferrite-e2e/`) & VS Code Eklentisi (`vscode-ferrite/`)**: `npx ferrite` başlatıcısı ve `.ferrite` sözdizimi renklendirmesi + kod parçacıkları (snippets).
 
 ---
 
@@ -107,7 +107,7 @@ Testlerinizde yakalanmamış JS hatalarını veya `console.error` çıktıların
 
 ## GitHub Release ve Paketleme
 
-- `.github/workflows/release.yml`: `v*` etiketi push edildiğinde (veya manuel `workflow_dispatch` ile) tüm testleri çalıştırır; Linux (`x64`/`arm64`), macOS (`x64`/`arm64`), Windows (`x64`) release binary'lerini, Chrome MV3 eklenti zip'ini ve VS Code eklenti zip'ini derleyip GitHub Release olarak yayınlar.
+- `.github/workflows/release.yml`: `v*` etiketi push edildiğinde (veya manuel `workflow_dispatch` ile) tüm testleri çalıştırır; Linux (`x64`/`arm64`), macOS (`x64`/`arm64`), Windows (`x64`) release binary'lerini, Chrome MV3 eklenti zip'ini ve VS Code eklenti zip'ini derleyip GitHub Release olarak yayınlar; ayrıca `v*` etiketlerinde 5 platform ikili paketiyle birlikte `@halil07/ferrite` paketini npm'e yayınlar (`NPM_TOKEN` repository secret gerektirir).
 - Yerel Chrome Web Store paketi oluşturmak için: `.\scripts\package-extension.ps1`.
 
 Ayrıntılı mimari, protokol akışı, güvenlik ve performans analizi için [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) dosyasına bakın.

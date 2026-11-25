@@ -27,7 +27,7 @@ function resolveBinary() {
   const exeName = process.platform === "win32" ? "ferrite.exe" : "ferrite";
 
   if (os && arch) {
-    const pkgName = `@ferrite-e2e/${os}-${arch}`;
+    const pkgName = `@halil07/ferrite-${os}-${arch}`;
     try {
       const pkgDir = path.dirname(require.resolve(`${pkgName}/package.json`));
       const binPath = path.join(pkgDir, "bin", exeName);
@@ -52,7 +52,7 @@ function resolveBinary() {
 const bin = resolveBinary();
 if (!bin) {
   console.error(
-    `ferrite-e2e: no native Ferrite binary found for ${process.platform}-${process.arch}.\n` +
+    `@halil07/ferrite: no native Ferrite binary found for ${process.platform}-${process.arch}.\n` +
       `Install platform optionalDependencies, set FERRITE_BIN, or build locally with: cargo build --release -p ferrite-cli`,
   );
   process.exit(1);
@@ -72,7 +72,7 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
 }
 
 child.on("error", (err) => {
-  console.error(`ferrite-e2e: failed to start ${bin}: ${err.message}`);
+  console.error(`@halil07/ferrite: failed to start ${bin}: ${err.message}`);
   process.exit(1);
 });
 

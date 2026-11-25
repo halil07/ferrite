@@ -1,4 +1,4 @@
-# `ferrite-e2e`
+# `@halil07/ferrite`
 
 Playwright-style `.ferrite` E2E automation engine powered by a Chrome MV3 `chrome.debugger` extension, Chrome Native Messaging, and a Tokio Rust daemon.
 
@@ -7,7 +7,7 @@ Playwright-style `.ferrite` E2E automation engine powered by a Chrome MV3 `chrom
 1. Install the **Ferrite E2E Bridge** extension from the Chrome Web Store (or load `extension/` unpacked in `chrome://extensions`).
 2. Install the CLI in your project:
    ```bash
-   npm install -D ferrite-e2e
+   npm install -D @halil07/ferrite
    ```
 3. Register the Native Messaging host for Chrome using the extension ID:
    ```bash

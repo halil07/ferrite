@@ -119,3 +119,92 @@ jobs:
         with:
           generate_release_notes: true
           files: artifacts/*
+
+  publish-npm:
+    name: Publish @halil07/ferrite to npm
+    needs: [build-binaries]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Package platform binaries and publish @halil07/ferrite
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          node <<'EOF'
+          const { execFileSync } = require("node:child_process");
+          const fs = require("node:fs");
+          const path = require("node:path");
+
+          if (!process.env.NODE_AUTH_TOKEN) {
+            throw new Error("NPM_TOKEN secret is not configured in GitHub repository secrets.");
+          }
+
+          const mainPkgPath = path.resolve("npm/ferrite-e2e/package.json");
+          const mainPkg = JSON.parse(fs.readFileSync(mainPkgPath, "utf8"));
+          const tag = (process.env.GITHUB_REF_NAME || "").replace(/^v/, "");
+          const version = /^\d+\.\d+\.\d+([-.+].+)?$/.test(tag) ? tag : mainPkg.version;
+
+          const platforms = [
+            { id: "windows-x64", archive: "ferrite-windows-x64.zip", bin: "ferrite.exe", os: "win32", cpu: "x64" },
+            { id: "linux-x64", archive: "ferrite-linux-x64.tar.gz", bin: "ferrite", os: "linux", cpu: "x64" },
+            { id: "linux-arm64", archive: "ferrite-linux-arm64.tar.gz", bin: "ferrite", os: "linux", cpu: "arm64" },
+            { id: "darwin-arm64", archive: "ferrite-darwin-arm64.tar.gz", bin: "ferrite", os: "darwin", cpu: "arm64" },
+            { id: "darwin-x64", archive: "ferrite-darwin-x64.tar.gz", bin: "ferrite", os: "darwin", cpu: "x64" },
+          ];
+
+          for (const p of platforms) {
+            const stageDir = path.resolve("npm-stage", p.id);
+            const binDir = path.join(stageDir, "bin");
+            fs.mkdirSync(binDir, { recursive: true });
+
+            const archivePath = path.resolve("artifacts", p.archive);
+            if (p.archive.endsWith(".zip")) {
+              execFileSync("unzip", ["-o", archivePath, "-d", binDir], { stdio: "inherit" });
+            } else {
+              execFileSync("tar", ["-xzf", archivePath, "-C", binDir], { stdio: "inherit" });
+            }
+
+            const binPath = path.join(binDir, p.bin);
+            fs.chmodSync(binPath, 0o755);
+
+            const pkgName = `@halil07/ferrite-${p.id}`;
+            const platformPkg = {
+              name: pkgName,
+              version,
+              description: `Prebuilt ${p.id} binary for @halil07/ferrite`,
+              license: mainPkg.license || "MIT",
+              os: [p.os],
+              cpu: [p.cpu],
+              files: ["bin"],
+              publishConfig: { access: "public" },
+            };
+            fs.writeFileSync(path.join(stageDir, "package.json"), JSON.stringify(platformPkg, null, 2) + "\n");
+
+            console.log(`Publishing ${pkgName}@${version}...`);
+            execFileSync("npm", ["publish", "--access", "public"], { cwd: stageDir, stdio: "inherit" });
+          }
+
+          mainPkg.version = version;
+          mainPkg.optionalDependencies = mainPkg.optionalDependencies || {};
+          for (const p of platforms) {
+            mainPkg.optionalDependencies[`@halil07/ferrite-${p.id}`] = version;
+          }
+          fs.writeFileSync(mainPkgPath, JSON.stringify(mainPkg, null, 2) + "\n");
+
+          console.log(`Publishing ${mainPkg.name}@${version}...`);
+          execFileSync("npm", ["publish", "--access", "public"], {
+            cwd: path.resolve("npm/ferrite-e2e"),
+            stdio: "inherit",
+          });
+          EOF
