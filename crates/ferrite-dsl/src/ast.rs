@@ -148,6 +148,21 @@ pub enum Stmt {
         timeout_ms: u64,
         span: Span,
     },
+    ConsoleStart {
+        span: Span,
+    },
+    ConsoleClear {
+        span: Span,
+    },
+    ExpectNoConsoleErrors {
+        span: Span,
+    },
+    ExpectConsole {
+        text: String,
+        level: Option<String>,
+        timeout_ms: u64,
+        span: Span,
+    },
     ExpectScreenshot {
         name: String,
         max_diff_ratio: Option<f64>,

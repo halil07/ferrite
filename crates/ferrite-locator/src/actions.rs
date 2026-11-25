@@ -24,6 +24,15 @@ impl LocatorEngine {
         }
     }
 
+    /// Clears the cached Accessibility Tree ref registry for `tab_id` (e.g. after a cross-document
+    /// navigation, reload, or tab close) so `@e1` numbering resets deterministically and memory stays bounded.
+    pub fn reset_tab(&self, tab_id: i64) {
+        self.registries
+            .lock()
+            .expect("locator mutex poisoned")
+            .remove(&tab_id);
+    }
+
     pub async fn snapshot(&self, tab_id: i64, interactive_only: bool) -> Result<Snapshot, CdpError> {
         self.transport
             .send_cdp(tab_id, "Accessibility.enable", json!({}), None)

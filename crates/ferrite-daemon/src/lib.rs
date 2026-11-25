@@ -14,7 +14,7 @@ pub use auth::{
 };
 pub use runner::{
     CaseReport, StepResult, SuiteReport, TestCase, TestStep, TestSuite, run_suite,
-    run_suite_over_ws, run_suite_over_ws_with_snapshots,
+    run_suite_over_ws, run_suite_over_ws_with_snapshots, send_ws_rpc,
 };
-pub use session::{E2eSession, is_attachable_url};
+pub use session::{E2eSession, is_attachable_url, is_blocked_cdp_method};
 pub use ws_server::WsServer;

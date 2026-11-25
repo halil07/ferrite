@@ -6,8 +6,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use ferrite_cdp::{
-    FetchInterceptor, LoadState, MockRouteResponse, NetworkDomain, NetworkMonitor, PageDomain,
-    ScreenshotOptions, TargetDomain,
+    ActionRecorder, ConsoleCollector, ConsoleLevel, FetchInterceptor, LoadState, MockRouteResponse,
+    NetworkDomain, NetworkMonitor, PageDomain, ScreenshotOptions, TargetDomain,
+    format_console_entries,
 };
 use ferrite_core::{CdpTransport, WsRequest, WsResponse};
 use ferrite_locator::LocatorEngine;
@@ -26,6 +27,15 @@ const RESTRICTED_URL_PREFIXES: &[&str] = &[
     "https://chromewebstore.google.com",
 ];
 
+/// Destructive profile-wide CDP commands blocked at both the daemon and extension layers so
+/// tests can never wipe the developer's logged-in Chrome profile.
+const BLOCKED_CDP_METHODS: &[&str] = &[
+    "Network.clearBrowserCookies",
+    "Network.clearBrowserCache",
+    "Storage.clearCookies",
+    "Browser.close",
+];
+
 /// Returns `true` when Chrome allows attaching `chrome.debugger` to `url`.
 pub fn is_attachable_url(url: &str) -> bool {
     let lower = url.trim().to_ascii_lowercase();
@@ -34,12 +44,48 @@ pub fn is_attachable_url(url: &str) -> bool {
         .any(|prefix| lower.starts_with(prefix))
 }
 
+pub fn is_blocked_cdp_method(method: &str) -> bool {
+    BLOCKED_CDP_METHODS.contains(&method)
+}
+
 struct TabRuntime {
     fetch_interceptor: Arc<FetchInterceptor>,
     fetch_task: Option<JoinHandle<()>>,
     network_domain: Arc<NetworkDomain>,
     network_monitor: Arc<NetworkMonitor>,
     monitor_task: Option<JoinHandle<()>>,
+    console_collector: Arc<ConsoleCollector>,
+    console_task: Option<JoinHandle<()>>,
+    action_recorder: Arc<ActionRecorder>,
+}
+
+impl TabRuntime {
+    fn new(transport: Arc<dyn CdpTransport>, tab_id: i64) -> Self {
+        Self {
+            fetch_interceptor: Arc::new(FetchInterceptor::new(transport.clone(), tab_id)),
+            fetch_task: None,
+            network_domain: Arc::new(NetworkDomain::new(transport.clone(), tab_id)),
+            network_monitor: NetworkMonitor::new(),
+            monitor_task: None,
+            console_collector: ConsoleCollector::new(),
+            console_task: None,
+            action_recorder: ActionRecorder::new(transport, tab_id),
+        }
+    }
+}
+
+impl Drop for TabRuntime {
+    fn drop(&mut self) {
+        if let Some(handle) = self.fetch_task.take() {
+            handle.abort();
+        }
+        if let Some(handle) = self.monitor_task.take() {
+            handle.abort();
+        }
+        if let Some(handle) = self.console_task.take() {
+            handle.abort();
+        }
+    }
 }
 
 /// High-level Playwright-style E2E session orchestrator binding `CdpTransport`, CDP domains
@@ -74,6 +120,19 @@ impl E2eSession {
 
     pub fn set_active_tab(&self, tab_id: i64) {
         *self.active_tab.lock().expect("active_tab mutex poisoned") = Some(tab_id);
+    }
+
+    /// Cleans up per-tab background tasks, cached Accessibility Tree refs, and active tab pointer.
+    pub fn cleanup_tab(&self, tab_id: i64) {
+        self.tab_runtimes
+            .lock()
+            .expect("tab_runtimes mutex poisoned")
+            .remove(&tab_id);
+        self.locator.reset_tab(tab_id);
+        let mut active = self.active_tab.lock().expect("active_tab mutex poisoned");
+        if *active == Some(tab_id) {
+            *active = None;
+        }
     }
 
     pub async fn resolve_tab(&self, requested: Option<i64>) -> anyhow::Result<i64> {
@@ -125,6 +184,7 @@ impl E2eSession {
         let frame_id = page
             .navigate(url, wait_until, Duration::from_millis(timeout_ms))
             .await?;
+        self.locator.reset_tab(tab_id);
         Ok(json!({ "tabId": tab_id, "frameId": frame_id, "url": url }))
     }
 
@@ -329,6 +389,7 @@ impl E2eSession {
     pub async fn reload(&self, tab_id: i64, ignore_cache: bool) -> anyhow::Result<Value> {
         let page = PageDomain::new(self.transport.clone(), tab_id);
         page.reload(ignore_cache).await?;
+        self.locator.reset_tab(tab_id);
         Ok(json!({ "tabId": tab_id, "reloaded": true }))
     }
 
@@ -395,13 +456,9 @@ impl E2eSession {
         self.transport.attach_tab(tab_id).await?;
         let interceptor = {
             let mut guard = self.tab_runtimes.lock().expect("tab_runtimes mutex poisoned");
-            let runtime = guard.entry(tab_id).or_insert_with(|| TabRuntime {
-                fetch_interceptor: Arc::new(FetchInterceptor::new(self.transport.clone(), tab_id)),
-                fetch_task: None,
-                network_domain: Arc::new(NetworkDomain::new(self.transport.clone(), tab_id)),
-                network_monitor: NetworkMonitor::new(),
-                monitor_task: None,
-            });
+            let runtime = guard
+                .entry(tab_id)
+                .or_insert_with(|| TabRuntime::new(self.transport.clone(), tab_id));
             runtime.fetch_interceptor.add_route(route);
             if runtime.fetch_task.is_none() {
                 runtime.fetch_task = Some(runtime.fetch_interceptor.clone().spawn_interceptor());
@@ -413,16 +470,29 @@ impl E2eSession {
         Ok(json!({ "tabId": tab_id, "intercepting": true }))
     }
 
+    pub async fn clear_mocks(&self, tab_id: i64) -> anyhow::Result<Value> {
+        let interceptor = {
+            let mut guard = self.tab_runtimes.lock().expect("tab_runtimes mutex poisoned");
+            guard.get_mut(&tab_id).map(|runtime| {
+                runtime.fetch_interceptor.clear_routes();
+                if let Some(handle) = runtime.fetch_task.take() {
+                    handle.abort();
+                }
+                runtime.fetch_interceptor.clone()
+            })
+        };
+        if let Some(interceptor) = interceptor {
+            let _ = interceptor.disable().await;
+        }
+        Ok(json!({ "tabId": tab_id, "cleared": true }))
+    }
+
     pub async fn start_network_monitor(&self, tab_id: i64) -> anyhow::Result<Value> {
         let network_domain = {
             let mut guard = self.tab_runtimes.lock().expect("tab_runtimes mutex poisoned");
-            let runtime = guard.entry(tab_id).or_insert_with(|| TabRuntime {
-                fetch_interceptor: Arc::new(FetchInterceptor::new(self.transport.clone(), tab_id)),
-                fetch_task: None,
-                network_domain: Arc::new(NetworkDomain::new(self.transport.clone(), tab_id)),
-                network_monitor: NetworkMonitor::new(),
-                monitor_task: None,
-            });
+            let runtime = guard
+                .entry(tab_id)
+                .or_insert_with(|| TabRuntime::new(self.transport.clone(), tab_id));
             if runtime.monitor_task.is_none() {
                 runtime.monitor_task = Some(
                     runtime
@@ -434,6 +504,123 @@ impl E2eSession {
         };
         network_domain.enable().await?;
         Ok(json!({ "tabId": tab_id, "monitoring": true }))
+    }
+
+    pub async fn console_start(&self, tab_id: i64) -> anyhow::Result<Value> {
+        self.transport.attach_tab(tab_id).await?;
+        {
+            let mut guard = self.tab_runtimes.lock().expect("tab_runtimes mutex poisoned");
+            let runtime = guard
+                .entry(tab_id)
+                .or_insert_with(|| TabRuntime::new(self.transport.clone(), tab_id));
+            if runtime.console_task.is_none() {
+                runtime.console_task = Some(
+                    runtime
+                        .console_collector
+                        .spawn_listener(self.transport.clone(), tab_id),
+                );
+            }
+        }
+        ConsoleCollector::enable(&self.transport, tab_id).await?;
+        Ok(json!({ "tabId": tab_id, "console": "started" }))
+    }
+
+    pub fn console_clear(&self, tab_id: i64) -> Value {
+        let guard = self.tab_runtimes.lock().expect("tab_runtimes mutex poisoned");
+        if let Some(runtime) = guard.get(&tab_id) {
+            runtime.console_collector.clear();
+        }
+        json!({ "tabId": tab_id, "cleared": true })
+    }
+
+    pub async fn assert_no_console_errors(&self, tab_id: i64) -> anyhow::Result<Value> {
+        let errors = {
+            let guard = self.tab_runtimes.lock().expect("tab_runtimes mutex poisoned");
+            guard
+                .get(&tab_id)
+                .map(|r| r.console_collector.errors())
+                .unwrap_or_default()
+        };
+        if !errors.is_empty() {
+            anyhow::bail!(
+                "console error assertion failed ({} error(s)):\n{}",
+                errors.len(),
+                format_console_entries(&errors)
+            );
+        }
+        Ok(json!({ "tabId": tab_id, "errors": 0 }))
+    }
+
+    pub async fn assert_console_message(
+        &self,
+        tab_id: i64,
+        text: &str,
+        level: Option<ConsoleLevel>,
+        timeout_ms: u64,
+    ) -> anyhow::Result<Value> {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms.max(1));
+        loop {
+            let matched = {
+                let guard = self.tab_runtimes.lock().expect("tab_runtimes mutex poisoned");
+                guard.get(&tab_id).and_then(|r| {
+                    r.console_collector.entries().into_iter().find(|e| {
+                        let level_ok = match level {
+                            Some(ConsoleLevel::Error) => e.level.is_error(),
+                            Some(lvl) => e.level == lvl,
+                            None => true,
+                        };
+                        level_ok
+                            && e.text
+                                .to_ascii_lowercase()
+                                .contains(&text.to_ascii_lowercase())
+                    })
+                })
+            };
+            if let Some(entry) = matched {
+                return Ok(serde_json::to_value(entry)?);
+            }
+            if Instant::now() >= deadline {
+                anyhow::bail!(
+                    "assertion failed: console message containing {text:?} (level={level:?}) not observed within {timeout_ms}ms"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    pub async fn record_start(&self, tab_id: i64, mask_passwords: bool) -> anyhow::Result<Value> {
+        self.transport.attach_tab(tab_id).await?;
+        let recorder = {
+            let mut guard = self.tab_runtimes.lock().expect("tab_runtimes mutex poisoned");
+            let runtime = guard
+                .entry(tab_id)
+                .or_insert_with(|| TabRuntime::new(self.transport.clone(), tab_id));
+            runtime.action_recorder.clone()
+        };
+        recorder.start(mask_passwords).await?;
+        Ok(json!({ "tabId": tab_id, "recording": true }))
+    }
+
+    pub async fn record_stop(
+        &self,
+        tab_id: i64,
+        suite_name: &str,
+        case_name: &str,
+    ) -> anyhow::Result<Value> {
+        let recorder = {
+            let guard = self.tab_runtimes.lock().expect("tab_runtimes mutex poisoned");
+            guard
+                .get(&tab_id)
+                .map(|r| r.action_recorder.clone())
+                .ok_or_else(|| anyhow::anyhow!("no active recording on tab {tab_id}"))?
+        };
+        let (actions, script) = recorder.stop(suite_name, case_name).await?;
+        Ok(json!({
+            "tabId": tab_id,
+            "stepCount": actions.len(),
+            "actions": actions,
+            "ferriteScript": script,
+        }))
     }
 
     pub async fn assert_screenshot(
@@ -513,6 +700,12 @@ impl E2eSession {
                 let tab_id = self.resolve_tab(req_tab).await?;
                 self.transport.attach_tab(tab_id).await?;
                 Ok(json!({ "tabId": tab_id, "attached": true }))
+            }
+            "tab.close" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                self.transport.close_tab(tab_id).await?;
+                self.cleanup_tab(tab_id);
+                Ok(json!({ "tabId": tab_id, "closed": true }))
             }
             "goto" => {
                 let tab_id = self.resolve_tab(req_tab).await?;
@@ -724,9 +917,62 @@ impl E2eSession {
                     .unwrap_or_default();
                 self.intercept_network(tab_id, route, patterns).await
             }
+            "mock.clear" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                self.clear_mocks(tab_id).await
+            }
             "network.monitor_start" => {
                 let tab_id = self.resolve_tab(req_tab).await?;
                 self.start_network_monitor(tab_id).await
+            }
+            "console.start" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                self.console_start(tab_id).await
+            }
+            "console.clear" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                Ok(self.console_clear(tab_id))
+            }
+            "assert_no_console_errors" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                self.assert_no_console_errors(tab_id).await
+            }
+            "assert_console" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                let text = params
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("missing `text`"))?;
+                let level = params
+                    .get("level")
+                    .and_then(Value::as_str)
+                    .and_then(ConsoleLevel::parse_level);
+                let timeout_ms = params
+                    .get("timeoutMs")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(5_000);
+                self.assert_console_message(tab_id, text, level, timeout_ms)
+                    .await
+            }
+            "record.start" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                let mask_passwords = params
+                    .get("maskPasswords")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                self.record_start(tab_id, mask_passwords).await
+            }
+            "record.stop" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                let suite_name = params
+                    .get("suiteName")
+                    .and_then(Value::as_str)
+                    .unwrap_or("recorded-suite");
+                let case_name = params
+                    .get("caseName")
+                    .and_then(Value::as_str)
+                    .unwrap_or("recorded-flow");
+                self.record_stop(tab_id, suite_name, case_name).await
             }
             "assert_screenshot" => {
                 let tab_id = self.resolve_tab(req_tab).await?;
@@ -775,6 +1021,11 @@ impl E2eSession {
                     .get("method")
                     .and_then(Value::as_str)
                     .ok_or_else(|| anyhow::anyhow!("missing `method`"))?;
+                if is_blocked_cdp_method(method) {
+                    anyhow::bail!(
+                        "blocked destructive profile-wide CDP command `{method}` for browser safety"
+                    );
+                }
                 let cdp_params = params.get("params").cloned().unwrap_or_else(|| json!({}));
                 let session_id = params.get("sessionId").and_then(Value::as_str);
                 Ok(self

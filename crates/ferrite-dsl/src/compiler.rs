@@ -4,7 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use ferrite_daemon::{TestCase, TestStep, TestSuite};
+use ferrite_cdp::ConsoleLevel;
+use ferrite_daemon::{TestCase, TestStep, TestSuite, is_blocked_cdp_method};
 use serde_json::Value;
 
 use crate::ast::{MacroDef, MockBodyAst, Stmt};
@@ -386,14 +387,85 @@ fn expand_stmts(
                     timeout_ms: *timeout_ms,
                 });
             }
+            Stmt::ConsoleStart { .. } => {
+                out_steps.push(TestStep::ConsoleStart);
+            }
+            Stmt::ConsoleClear { .. } => {
+                out_steps.push(TestStep::ConsoleClear);
+            }
+            Stmt::ExpectNoConsoleErrors { .. } => {
+                out_steps.push(TestStep::AssertNoConsoleErrors);
+            }
+            Stmt::ExpectConsole {
+                text,
+                level,
+                timeout_ms,
+                span,
+            } => {
+                if let Some(lvl) = level
+                    && ConsoleLevel::parse_level(lvl).is_none()
+                {
+                    return Err(DslError::Compile {
+                        file: file.to_string(),
+                        span: *span,
+                        message: format!(
+                            "invalid console level `{lvl}`; expected one of: log, info, warn, error, debug, exception, browser"
+                        ),
+                    });
+                }
+                out_steps.push(TestStep::AssertConsole {
+                    text: interpolate(text, scope, file, *span)?,
+                    level: level.clone(),
+                    timeout_ms: *timeout_ms,
+                });
+            }
             Stmt::ExpectScreenshot {
                 name,
                 max_diff_ratio,
                 threshold,
                 span,
             } => {
+                let resolved_name = interpolate(name, scope, file, *span)?;
+                let valid_name = !resolved_name.is_empty()
+                    && resolved_name.len() <= 128
+                    && !resolved_name.starts_with('.')
+                    && !resolved_name.contains("..")
+                    && resolved_name
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
+                if !valid_name {
+                    return Err(DslError::Compile {
+                        file: file.to_string(),
+                        span: *span,
+                        message: format!(
+                            "invalid screenshot baseline name `{resolved_name}`; use 1..=128 ASCII letters, digits, '.', '_', or '-' without leading '.' or '..'"
+                        ),
+                    });
+                }
+                if let Some(t) = threshold
+                    && (!t.is_finite() || !(0.0..=1.0).contains(t))
+                {
+                    return Err(DslError::Compile {
+                        file: file.to_string(),
+                        span: *span,
+                        message: format!(
+                            "screenshot `threshold` must be between 0.0 and 1.0, got {t}"
+                        ),
+                    });
+                }
+                if let Some(r) = max_diff_ratio
+                    && (!r.is_finite() || !(0.0..=1.0).contains(r))
+                {
+                    return Err(DslError::Compile {
+                        file: file.to_string(),
+                        span: *span,
+                        message: format!(
+                            "screenshot `maxDiff` must be between 0.0 and 1.0, got {r}"
+                        ),
+                    });
+                }
                 out_steps.push(TestStep::AssertScreenshot {
-                    name: interpolate(name, scope, file, *span)?,
+                    name: resolved_name,
                     max_diff_ratio: *max_diff_ratio,
                     threshold: *threshold,
                 });
@@ -406,12 +478,32 @@ fn expand_stmts(
                 params,
                 span,
             } => {
+                let resolved_method = interpolate(method, scope, file, *span)?;
+                if is_blocked_cdp_method(&resolved_method) {
+                    return Err(DslError::Compile {
+                        file: file.to_string(),
+                        span: *span,
+                        message: format!(
+                            "CDP command `{resolved_method}` is blocked for browser profile safety"
+                        ),
+                    });
+                }
                 out_steps.push(TestStep::RawCdp {
-                    method: interpolate(method, scope, file, *span)?,
+                    method: resolved_method,
                     params: interpolate_json(params, scope, file, *span)?,
                 });
             }
             Stmt::Mock(mock) => {
+                if !(100..=599).contains(&mock.status) {
+                    return Err(DslError::Compile {
+                        file: file.to_string(),
+                        span: mock.span,
+                        message: format!(
+                            "mock HTTP status must be between 100 and 599, got {}",
+                            mock.status
+                        ),
+                    });
+                }
                 let mut headers = HashMap::with_capacity(mock.headers.len());
                 for (k, v) in &mock.headers {
                     headers.insert(
@@ -667,6 +759,81 @@ mod tests {
         assert!(matches!(&steps[8], TestStep::HoverText { text, .. } if text == "Buy oat milk"));
         assert!(matches!(&steps[10], TestStep::AssertHidden { text, timeout_ms: 2_000, .. } if text == "Buy oat milk"));
         assert!(matches!(&steps[11], TestStep::Reload { ignore_cache: true }));
+    }
+
+    #[test]
+    fn compiles_console_assertions_and_recorded_ferrite_script() {
+        let recorded = ferrite_cdp::render_ferrite_script(
+            "rec-suite",
+            "rec-case",
+            &[
+                ferrite_cdp::RecordedAction::Navigate {
+                    url: "https://example.com".into(),
+                },
+                ferrite_cdp::RecordedAction::FillRole {
+                    role: "textbox".into(),
+                    name: Some("Email".into()),
+                    value: "ada@example.com".into(),
+                },
+                ferrite_cdp::RecordedAction::PressKey {
+                    key: "Enter".into(),
+                },
+            ],
+        );
+        let parsed_rec = compile_source("recorded.ferrite", Path::new("."), &recorded).unwrap();
+        assert_eq!(parsed_rec.cases[0].steps.len(), 3);
+
+        let console_src = r#"
+            suite "console-suite"
+            test "checks-console" {
+                console start
+                console clear
+                expect console "booted" level info timeout 2s
+                expect noConsoleErrors
+            }
+        "#;
+        let console_suite = compile_source("console.ferrite", Path::new("."), console_src).unwrap();
+        assert_eq!(console_suite.cases[0].steps.len(), 4);
+        assert!(matches!(console_suite.cases[0].steps[0], TestStep::ConsoleStart));
+        assert!(matches!(console_suite.cases[0].steps[3], TestStep::AssertNoConsoleErrors));
+    }
+
+    #[test]
+    fn rejects_invalid_semantics_at_compile_time() {
+        let cases = [
+            (
+                r#"test "bad-threshold" { expect screenshot "home" threshold 1.5 }"#,
+                "threshold",
+            ),
+            (
+                r#"test "bad-maxdiff" { expect screenshot "home" maxDiff 2.0 }"#,
+                "maxDiff",
+            ),
+            (
+                r#"test "bad-name" { expect screenshot "../escape" }"#,
+                "invalid screenshot baseline name",
+            ),
+            (
+                r#"test "bad-status" { mock "/api" status 999 { body "{}" } }"#,
+                "100 and 599",
+            ),
+            (
+                r#"test "bad-level" { expect console "hi" level fatal }"#,
+                "invalid console level",
+            ),
+            (
+                r#"test "blocked-cdp" { cdp "Storage.clearCookies" {} }"#,
+                "blocked for browser profile safety",
+            ),
+        ];
+
+        for (src, expected_substr) in cases {
+            let err = compile_source("bad.ferrite", Path::new("."), src).unwrap_err();
+            assert!(
+                err.to_string().contains(expected_substr),
+                "expected error containing {expected_substr:?}, got: {err}"
+            );
+        }
     }
 
     trait SuiteExt {

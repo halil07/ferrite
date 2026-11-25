@@ -87,7 +87,7 @@ Görsel regresyon (`05-visual-regression.ferrite`) baseline PNG'lerini ilk kez o
 
 ---
 
-## Yeni `.ferrite` Projesi Başlatma
+## Yeni `.ferrite` Projesi Başlatma ve Canlı Test Kaydı
 
 Kendi projenizde sıfırdan başlamak için:
 
@@ -96,6 +96,14 @@ Kendi projenizde sıfırdan başlamak için:
 .\target\release\ferrite.exe check .\my-e2e-tests
 .\target\release\ferrite.exe run .\my-e2e-tests
 ```
+
+Tarayıcıda yaptığınız tıklama ve yazma adımlarını otomatik olarak `.ferrite` test koduna dönüştürmek için (`Ctrl+C` ile kaydı durdurup üretir):
+
+```powershell
+.\target\release\ferrite.exe record --url https://todomvc.com/examples/react/dist/ --out .\recorded.ferrite
+```
+
+Testlerinizde yakalanmamış JS hatalarını veya `console.error` çıktılarını yakalamak için `console start` ve `expect noConsoleErrors` / `expect console "..."` ifadelerini kullanabilirsiniz. Profil güvenliği için yıkıcı `Network.clearBrowserCookies`, `Network.clearBrowserCache` ve `Browser.close` CDP komutları hem eklenti hem daemon katmanında engellenir.
 
 ## GitHub Release ve Paketleme
 

@@ -3,12 +3,15 @@ import "./helpers/todomvc.ferrite"
 
 beforeEach {
   use open_clean_app()
+  console start
+  console clear
 }
 
 test "initial-empty-state" {
   expect visible "todos"
   expect hidden "item left"
   expect hidden "Clear completed"
+  expect noConsoleErrors
 }
 
 test "create-single-and-multiple-todos" {
@@ -21,6 +24,7 @@ test "create-single-and-multiple-todos" {
   expect visible "Walk the dog"
   expect visible "Read Rust book"
   expect visible "3 items left"
+  expect noConsoleErrors
 }
 
 test "trim-whitespace-and-ignore-too-short-inputs" {

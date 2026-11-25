@@ -395,6 +395,17 @@ impl<'a> Parser<'a> {
                 let ignore_cache = self.eat_ident("ignoreCache") || self.eat_ident("ignore_cache");
                 Ok(Stmt::Reload { ignore_cache, span })
             }
+            "console" => {
+                let (sub, sub_span) = self.expect_ident()?;
+                match sub.as_str() {
+                    "start" => Ok(Stmt::ConsoleStart { span }),
+                    "clear" => Ok(Stmt::ConsoleClear { span }),
+                    other => Err(self.err(
+                        sub_span,
+                        format!("unknown `console` action `{other}` (use `start` or `clear`)"),
+                    )),
+                }
+            }
             "expect" => {
                 let (kind, k_span) = self.expect_ident()?;
                 match kind.as_str() {
@@ -414,6 +425,30 @@ impl<'a> Parser<'a> {
                         Ok(Stmt::ExpectHidden {
                             text,
                             exact,
+                            timeout_ms,
+                            span,
+                        })
+                    }
+                    "noConsoleErrors" | "no_console_errors" => {
+                        Ok(Stmt::ExpectNoConsoleErrors { span })
+                    }
+                    "console" => {
+                        let (text, _) = self.expect_string()?;
+                        let mut level = None;
+                        let mut timeout_ms = 5_000u64;
+                        loop {
+                            if self.eat_ident("level") {
+                                let (lvl, _) = self.expect_ident()?;
+                                level = Some(lvl);
+                            } else if self.eat_ident("timeout") {
+                                timeout_ms = self.expect_duration_ms()?;
+                            } else {
+                                break;
+                            }
+                        }
+                        Ok(Stmt::ExpectConsole {
+                            text,
+                            level,
                             timeout_ms,
                             span,
                         })

@@ -143,7 +143,11 @@ impl PageDomain {
             .unwrap_or_default()
             .to_string();
 
-        if wait_until == LoadState::Commit {
+        // In Chromium CDP, same-document navigations (such as SPA hash transitions `#/active` -> `#/completed`)
+        // omit `loaderId` and never fire `Page.loadEventFired` or `Page.domContentLoadedEventFired`.
+        let is_same_document =
+            result.get("frameId").is_some() && result.get("loaderId").is_none();
+        if wait_until == LoadState::Commit || is_same_document {
             return Ok(frame_id);
         }
 
@@ -265,6 +269,7 @@ impl PageDomain {
                 json!({
                     "frameId": frame_id,
                     "worldName": world_name,
+                    // Note: `grantUniveralAccess` (missing 's') is the exact upstream Chromium CDP parameter name.
                     "grantUniveralAccess": true,
                 }),
                 session_id,
@@ -341,7 +346,10 @@ mod tests {
         let mock = MockCdpTransport::new();
         let page = PageDomain::new(mock.clone(), 1);
 
-        mock.push_ok("Page.navigate", json!({ "frameId": "main-frame" }));
+        mock.push_ok(
+            "Page.navigate",
+            json!({ "frameId": "main-frame", "loaderId": "loader-1" }),
+        );
         let mock_clone = mock.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(15)).await;
@@ -373,5 +381,24 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(bytes, raw_png);
+    }
+
+    #[tokio::test]
+    async fn same_document_navigation_returns_immediately_without_load_event() {
+        let mock = MockCdpTransport::new();
+        let page = PageDomain::new(mock.clone(), 1);
+
+        // No `loaderId` signals a same-document hash/history navigation in Chromium CDP.
+        mock.push_ok("Page.navigate", json!({ "frameId": "main-frame" }));
+
+        let frame_id = page
+            .navigate(
+                "https://todomvc.com/examples/react/dist/#/active",
+                LoadState::Load,
+                Duration::from_millis(200),
+            )
+            .await
+            .unwrap();
+        assert_eq!(frame_id, "main-frame");
     }
 }

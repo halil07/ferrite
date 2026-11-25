@@ -10,7 +10,7 @@ use ferrite_core::NATIVE_HOST_NAME;
 use ferrite_daemon::{
     ConnectionInfo, E2eSession, SuiteReport, WsServer, default_connection_file,
     default_snapshots_dir, generate_session_token, read_connection_file,
-    run_suite_over_ws_with_snapshots, write_connection_file,
+    run_suite_over_ws_with_snapshots, send_ws_rpc, write_connection_file,
 };
 use ferrite_dsl::{compile_path, default_project_scaffold, load_project_config};
 use ferrite_ipc::{NativeBridgeClient, StdioBridge};
@@ -99,6 +99,34 @@ enum Command {
 
         #[arg(long)]
         snapshots_dir: Option<PathBuf>,
+
+        /// Output the full machine-readable JSON test report instead of the human summary.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+
+    /// Record live user interactions in Chrome and generate a `.ferrite` test file.
+    Record {
+        #[arg(long)]
+        url: Option<String>,
+
+        #[arg(long, default_value = "recorded-suite")]
+        suite: String,
+
+        #[arg(long, default_value = "recorded-flow")]
+        case_name: String,
+
+        #[arg(long)]
+        out: Option<PathBuf>,
+
+        #[arg(long, default_value_t = false)]
+        no_mask_passwords: bool,
+
+        #[arg(long)]
+        ws_url: Option<String>,
+
+        #[arg(long)]
+        token: Option<String>,
     },
 
     /// Register the Chrome Native Messaging host manifest for a Store or unpacked extension ID.
@@ -175,9 +203,39 @@ async fn main() -> anyhow::Result<()> {
             token,
             update_baselines,
             snapshots_dir,
+            json: json_output,
         } => {
             init_stderr_tracing();
-            run_test_suites(path, ws_url, token, update_baselines, snapshots_dir).await
+            run_test_suites(
+                path,
+                ws_url,
+                token,
+                update_baselines,
+                snapshots_dir,
+                json_output,
+            )
+            .await
+        }
+        Command::Record {
+            url,
+            suite,
+            case_name,
+            out,
+            no_mask_passwords,
+            ws_url,
+            token,
+        } => {
+            init_stderr_tracing();
+            run_record(
+                url,
+                suite,
+                case_name,
+                out,
+                !no_mask_passwords,
+                ws_url,
+                token,
+            )
+            .await
         }
         Command::Setup {
             extension_id,
@@ -326,12 +384,82 @@ fn run_check(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn resolve_daemon_connection(
+    ws_url: Option<String>,
+    token: Option<String>,
+) -> anyhow::Result<(String, String)> {
+    match (ws_url, token) {
+        (Some(u), Some(t)) => Ok((u, t)),
+        (opt_u, opt_t) => {
+            let conn_path = default_connection_file();
+            let conn = read_connection_file(&conn_path).map_err(|err| {
+                anyhow::anyhow!(
+                    "could not read Ferrite daemon connection file at {} ({err}).\n\
+                     Make sure:\n\
+                     1. Chrome is running with the Ferrite E2E extension enabled, and\n\
+                     2. You have run `ferrite setup --extension-id <32-char-id>` (or pass `--ws-url` and `--token`).",
+                    conn_path.display()
+                )
+            })?;
+            Ok((
+                opt_u.unwrap_or_else(|| format!("ws://127.0.0.1:{}", conn.port)),
+                opt_t.unwrap_or(conn.token),
+            ))
+        }
+    }
+}
+
+fn print_human_report(reports: &[SuiteReport]) {
+    let mut total_cases = 0usize;
+    let mut passed_cases = 0usize;
+    let mut failed_cases = 0usize;
+    let mut total_ms = 0u64;
+
+    for report in reports {
+        total_cases += report.total_cases;
+        passed_cases += report.passed_cases;
+        failed_cases += report.failed_cases;
+        total_ms += report.duration_ms;
+
+        let suite_status = if report.passed { "PASS" } else { "FAIL" };
+        println!(
+            "[{suite_status}] suite {:?} ({}/{} passed, {}ms)",
+            report.suite, report.passed_cases, report.total_cases, report.duration_ms
+        );
+        for case in &report.cases {
+            let case_status = if case.passed { "PASS" } else { "FAIL" };
+            println!(
+                "  [{case_status}] {} ({} step(s), {}ms)",
+                case.name,
+                case.steps.len(),
+                case.duration_ms
+            );
+            if !case.passed
+                && let Some(failed_step) = case.steps.iter().find(|s| !s.passed)
+            {
+                println!(
+                    "         step #{} `{}` failed: {}",
+                    failed_step.index + 1,
+                    failed_step.action,
+                    failed_step.error.as_deref().unwrap_or("unknown error")
+                );
+            }
+        }
+    }
+
+    println!(
+        "\nSummary: {} suite(s), {passed_cases}/{total_cases} case(s) passed, {failed_cases} failed ({total_ms}ms)",
+        reports.len()
+    );
+}
+
 async fn run_test_suites(
     path: PathBuf,
     ws_url: Option<String>,
     token: Option<String>,
     update_baselines: bool,
     snapshots_dir: Option<PathBuf>,
+    json_output: bool,
 ) -> anyhow::Result<()> {
     let compiled = compile_path(&path)?;
     if compiled.is_empty() {
@@ -346,16 +474,7 @@ async fn run_test_suites(
         },
     };
 
-    let (resolved_url, resolved_token) = match (ws_url, token) {
-        (Some(u), Some(t)) => (u, t),
-        (opt_u, opt_t) => {
-            let conn = read_connection_file(&default_connection_file())?;
-            (
-                opt_u.unwrap_or_else(|| format!("ws://127.0.0.1:{}", conn.port)),
-                opt_t.unwrap_or(conn.token),
-            )
-        }
-    };
+    let (resolved_url, resolved_token) = resolve_daemon_connection(ws_url, token)?;
 
     let mut reports: Vec<SuiteReport> = Vec::with_capacity(compiled.len());
     for (_, suite) in compiled {
@@ -366,25 +485,95 @@ async fn run_test_suites(
             update_baselines,
             Some(&resolved_snapshots),
         )
-        .await?;
+        .await
+        .map_err(|err| {
+            anyhow::anyhow!(
+                "failed executing suite {:?} against {resolved_url}: {err}\n\
+                 Hint: verify the Ferrite Chrome extension shows 'Connected' (click Reconnect Native Host in the popup if needed).",
+                suite.name
+            )
+        })?;
         reports.push(report);
     }
 
     let all_passed = reports.iter().all(|r| r.passed);
-    if reports.len() == 1 {
-        println!("{}", serde_json::to_string_pretty(&reports[0])?);
+    if json_output {
+        if reports.len() == 1 {
+            println!("{}", serde_json::to_string_pretty(&reports[0])?);
+        } else {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "passed": all_passed,
+                    "suites": reports,
+                }))?
+            );
+        }
     } else {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "passed": all_passed,
-                "suites": reports,
-            }))?
-        );
+        print_human_report(&reports);
     }
 
     if !all_passed {
         std::process::exit(1);
+    }
+    Ok(())
+}
+
+async fn run_record(
+    url: Option<String>,
+    suite: String,
+    case_name: String,
+    out: Option<PathBuf>,
+    mask_passwords: bool,
+    ws_url: Option<String>,
+    token: Option<String>,
+) -> anyhow::Result<()> {
+    let (resolved_url, resolved_token) = resolve_daemon_connection(ws_url, token)?;
+
+    if let Some(ref target_url) = url {
+        let _ = send_ws_rpc(
+            &resolved_url,
+            &resolved_token,
+            "goto",
+            json!({ "url": target_url, "waitUntil": "load", "timeoutMs": 15_000 }),
+        )
+        .await?;
+    }
+
+    let _ = send_ws_rpc(
+        &resolved_url,
+        &resolved_token,
+        "record.start",
+        json!({ "maskPasswords": mask_passwords }),
+    )
+    .await?;
+
+    eprintln!("Recording Chrome interactions... Perform your flow in Chrome, then press Ctrl-C to generate `.ferrite` code.");
+    tokio::signal::ctrl_c().await?;
+
+    let stopped = send_ws_rpc(
+        &resolved_url,
+        &resolved_token,
+        "record.stop",
+        json!({ "suiteName": suite, "caseName": case_name }),
+    )
+    .await?;
+
+    let script = stopped
+        .get("ferriteScript")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+
+    if let Some(dest) = out {
+        if let Some(parent) = dest.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&dest, script)?;
+        println!("Saved recorded .ferrite test to {}", dest.display());
+    } else {
+        println!("{script}");
     }
     Ok(())
 }

@@ -56,9 +56,19 @@ pub fn default_snapshots_dir() -> PathBuf {
 pub fn write_connection_file(path: &Path, info: &ConnectionInfo) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+        }
     }
     let payload = serde_json::to_vec_pretty(info)?;
     fs::write(path, payload)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
     Ok(())
 }
 

@@ -42,6 +42,8 @@ export class NativeBridge {
       });
 
       port.onDisconnect.addListener(() => {
+        // Guard against stale async disconnect callbacks after an explicit disconnect()+connect().
+        if (this.port !== port) return;
         const err = chrome.runtime.lastError?.message || "Native host disconnected";
         this.lastError = err;
         this.port = null;

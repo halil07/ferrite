@@ -85,7 +85,7 @@ async fn ws_gateway_rejects_cswsh_origin_and_bad_token_and_runs_e2e_suite() {
                     session_id: None,
                 });
             });
-            Some(Ok(json!({ "frameId": "main" })))
+            Some(Ok(json!({ "frameId": "main", "loaderId": "loader-1" })))
         }
         "Accessibility.getFullAXTree" => Some(Ok(json!({
             "nodes": [
@@ -204,4 +204,92 @@ fn sample_e2e_suite_matches_test_suite_schema() {
     let raw = fs::read_to_string(&sample_path).unwrap();
     let suite: TestSuite = serde_json::from_str(&raw).unwrap();
     assert!(!suite.cases.is_empty());
+}
+
+#[tokio::test]
+async fn blocks_destructive_cdp_commands_and_resets_refs_across_goto() {
+    let mock = MockCdpTransport::new();
+    let temp_dir = std::env::temp_dir().join(format!("ferrite-e2e-safety-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_dir);
+    let session = E2eSession::new(mock.clone(), &temp_dir);
+
+    for blocked in [
+        "Network.clearBrowserCookies",
+        "Network.clearBrowserCache",
+        "Storage.clearCookies",
+        "Browser.close",
+    ] {
+        let resp = session
+            .dispatch_rpc(&ferrite_core::WsRequest {
+                id: 1,
+                action: "raw_cdp".to_string(),
+                params: json!({ "tabId": 1, "method": blocked }),
+            })
+            .await;
+        assert!(!resp.ok, "expected {blocked} to be blocked");
+        assert!(
+            resp.error
+                .as_deref()
+                .is_some_and(|msg| msg.contains("blocked destructive")),
+            "unexpected error for {blocked}: {:?}",
+            resp.error
+        );
+    }
+
+    // Verify `goto` resets `@e1` numbering deterministically on fresh page navigations
+    // (even when the new page renders a completely different button).
+    let nav_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let nav_count_clone = Arc::clone(&nav_count);
+    mock.add_handler(move |_tab_id, method, _params, _session| match method {
+        "Page.navigate" => {
+            nav_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Some(Ok(json!({ "frameId": "main" })))
+        }
+        "Accessibility.getFullAXTree" => {
+            let label = if nav_count_clone.load(std::sync::atomic::Ordering::SeqCst) <= 1 {
+                "Submit"
+            } else {
+                "Checkout"
+            };
+            Some(Ok(json!({
+                "nodes": [
+                    {
+                        "nodeId": "1",
+                        "role": { "type": "role", "value": "RootWebArea" },
+                        "childIds": ["2"]
+                    },
+                    {
+                        "nodeId": "2",
+                        "parentId": "1",
+                        "role": { "type": "role", "value": "button" },
+                        "name": { "type": "computedString", "value": label },
+                        "backendDOMNodeId": 11,
+                        "childIds": []
+                    }
+                ]
+            })))
+        }
+        _ => None,
+    });
+
+    session
+        .goto(1, "https://example.com/a", LoadState::Commit, 1_000)
+        .await
+        .unwrap();
+    let snap1 = session.snapshot(1, true).await.unwrap();
+    assert_eq!(snap1["items"][0]["entry"]["refId"], "e1");
+    assert_eq!(snap1["items"][0]["entry"]["name"], "Submit");
+
+    session
+        .goto(1, "https://example.com/b", LoadState::Commit, 1_000)
+        .await
+        .unwrap();
+    let snap2 = session.snapshot(1, true).await.unwrap();
+    assert_eq!(snap2["items"][0]["entry"]["name"], "Checkout");
+    assert_eq!(
+        snap2["items"][0]["entry"]["refId"], "e1",
+        "ref numbering must reset to e1 after navigation"
+    );
+
+    let _ = fs::remove_dir_all(&temp_dir);
 }

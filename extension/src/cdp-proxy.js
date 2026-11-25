@@ -1,6 +1,13 @@
 import * as DebuggerHub from "./debugger-hub.js";
 import { PROTOCOL_VERSION } from "./protocol.js";
 
+const BLOCKED_CDP_METHODS = new Set([
+  "Network.clearBrowserCookies",
+  "Network.clearBrowserCache",
+  "Storage.clearCookies",
+  "Browser.close",
+]);
+
 function ok(id, result) {
   return {
     v: PROTOCOL_VERSION,
@@ -88,6 +95,13 @@ export async function handleHostRequest(msg) {
       case "cdp.send": {
         if (typeof params.tabId !== "number" || typeof params.method !== "string") {
           return fail(id, "INVALID_PARAMS", "cdp.send requires tabId and method");
+        }
+        if (BLOCKED_CDP_METHODS.has(params.method)) {
+          return fail(
+            id,
+            "BLOCKED_COMMAND",
+            `Blocked destructive profile-wide CDP command: ${params.method}`
+          );
         }
         const result = await DebuggerHub.sendCommand({
           tabId: params.tabId,

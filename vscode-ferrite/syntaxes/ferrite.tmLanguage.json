@@ -125,7 +125,7 @@
       "patterns": [
         {
           "name": "support.function.action.ferrite",
-          "match": "\\b(goto|snapshot|click|dblclick|hover|fill|press|type|reload|wait|mock|cdp|tab)\\b"
+          "match": "\\b(goto|snapshot|click|dblclick|hover|fill|press|type|reload|console|wait|mock|cdp|tab)\\b"
         }
       ]
     },
@@ -133,7 +133,7 @@
       "patterns": [
         {
           "name": "keyword.other.assertion.ferrite",
-          "match": "\\b(expect|visible|hidden|screenshot)\\b"
+          "match": "\\b(expect|visible|hidden|screenshot|noConsoleErrors|no_console_errors)\\b"
         }
       ]
     },
@@ -141,7 +141,7 @@
       "patterns": [
         {
           "name": "storage.modifier.ferrite",
-          "match": "\\b(role|text|nth|exact|interactive|full|timeout|threshold|maxDiff|max_diff|status|pattern|header|body|file|load|domcontentloaded|commit|ignoreCache|ignore_cache)\\b"
+          "match": "\\b(role|text|nth|exact|interactive|full|timeout|threshold|maxDiff|max_diff|status|pattern|header|body|file|load|domcontentloaded|commit|ignoreCache|ignore_cache|start|clear|level)\\b"
         }
       ]
     },

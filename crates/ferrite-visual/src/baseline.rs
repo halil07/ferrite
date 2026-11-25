@@ -68,6 +68,7 @@ impl SnapshotStore {
     pub fn validate_name(name: &str) -> Result<&str, VisualError> {
         if name.is_empty()
             || name.len() > 128
+            || name.starts_with('.')
             || name.contains("..")
             || !name
                 .bytes()

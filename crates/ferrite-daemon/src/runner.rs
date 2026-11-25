@@ -125,6 +125,16 @@ pub enum TestStep {
         #[serde(default = "default_action_timeout_ms")]
         timeout_ms: u64,
     },
+    ConsoleStart,
+    ConsoleClear,
+    AssertNoConsoleErrors,
+    AssertConsole {
+        text: String,
+        #[serde(default)]
+        level: Option<String>,
+        #[serde(default = "default_action_timeout_ms")]
+        timeout_ms: u64,
+    },
     MockRoute {
         url_substring: String,
         status: u16,
@@ -335,6 +345,25 @@ fn step_to_rpc(
         } => (
             "assert_hidden".to_string(),
             json!({ "tabId": tab_id, "text": text, "exact": exact, "timeoutMs": timeout_ms }),
+        ),
+        TestStep::ConsoleStart => ("console.start".to_string(), json!({ "tabId": tab_id })),
+        TestStep::ConsoleClear => ("console.clear".to_string(), json!({ "tabId": tab_id })),
+        TestStep::AssertNoConsoleErrors => (
+            "assert_no_console_errors".to_string(),
+            json!({ "tabId": tab_id }),
+        ),
+        TestStep::AssertConsole {
+            text,
+            level,
+            timeout_ms,
+        } => (
+            "assert_console".to_string(),
+            json!({
+                "tabId": tab_id,
+                "text": text,
+                "level": level,
+                "timeoutMs": timeout_ms
+            }),
         ),
         TestStep::MockRoute {
             url_substring,
@@ -570,4 +599,54 @@ pub async fn run_suite_over_ws_with_snapshots(
         duration_ms: suite_start.elapsed().as_millis() as u64,
         cases: case_reports,
     })
+}
+
+/// Sends a single authenticated RPC call to a running `ferrite-daemon` WebSocket server.
+pub async fn send_ws_rpc(
+    ws_url: &str,
+    token: &str,
+    action: &str,
+    params: Value,
+) -> anyhow::Result<Value> {
+    let mut request = ws_url.into_client_request()?;
+    request
+        .headers_mut()
+        .insert("Authorization", format!("Bearer {token}").parse()?);
+
+    let (mut ws_stream, _) = connect_async(request).await?;
+    let req = WsRequest {
+        id: 1,
+        action: action.to_string(),
+        params,
+    };
+    ws_stream
+        .send(Message::Text(serde_json::to_string(&req)?.into()))
+        .await?;
+
+    let resp = loop {
+        match ws_stream.next().await {
+            Some(Ok(Message::Text(txt))) => {
+                if let Ok(parsed) = serde_json::from_str::<WsResponse>(&txt)
+                    && parsed.id == 1
+                {
+                    break parsed;
+                }
+            }
+            Some(Ok(Message::Close(_))) | None => {
+                anyhow::bail!("WebSocket closed before response for `{action}`");
+            }
+            Some(Ok(_)) => continue,
+            Some(Err(err)) => return Err(err.into()),
+        }
+    };
+    let _ = ws_stream.close(None).await;
+
+    if resp.ok {
+        Ok(resp.result.unwrap_or(Value::Null))
+    } else {
+        anyhow::bail!(
+            "{}",
+            resp.error.unwrap_or_else(|| format!("RPC `{action}` failed"))
+        )
+    }
 }

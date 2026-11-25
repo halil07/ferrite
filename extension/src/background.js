@@ -48,8 +48,12 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === KEEPALIVE_ALARM && !bridge.isConnected()) {
+  if (alarm.name !== KEEPALIVE_ALARM) return;
+  if (!bridge.isConnected()) {
     bridge.connect();
+  } else {
+    // Proactive heartbeat detects half-open native messaging pipes and keeps the MV3 worker healthy.
+    bridge.sendEvent("heartbeat", { ts: Date.now() });
   }
 });
 
