@@ -1,0 +1,39 @@
+suite "todomvc-03-edit-and-delete"
+import "./helpers/todomvc.ferrite"
+
+beforeEach {
+  use open_clean_app()
+}
+
+test "edit-todo-on-double-click-and-enter" {
+  use add_todo("Write unit tests")
+  expect visible "Write unit tests"
+
+  use edit_todo("Write unit tests", "Write E2E tests")
+  expect visible "Write E2E tests"
+  expect hidden "Write unit tests"
+  expect visible "1 item left"
+}
+
+test "cancel-edit-with-escape-preserves-original" {
+  use add_todo("Keep original title")
+  use cancel_edit_todo("Keep original title", "Discarded draft")
+
+  expect visible "Keep original title"
+  expect hidden "Discarded draft"
+}
+
+test "delete-todo-via-hover-destroy-button" {
+  use add_todo("First task")
+  use add_todo("Second task")
+  expect visible "2 items left"
+
+  use delete_todo("First task")
+  expect hidden "First task"
+  expect visible "Second task"
+  expect visible "1 item left"
+
+  use delete_todo("Second task")
+  expect hidden "Second task"
+  expect hidden "item left"
+}

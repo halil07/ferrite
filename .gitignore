@@ -1,0 +1,21 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# Release & packaging outputs
+/dist/
+
+# Ferrite E2E transient visual test artifacts (keep baselines/)
+**/.ferrite-snapshots/actual/
+**/.ferrite-snapshots/diffs/
+
+# Node / npm
+node_modules/
+npm-debug.log*
+
+# Editor & OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/*.log

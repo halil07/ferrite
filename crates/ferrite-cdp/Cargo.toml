@@ -1,0 +1,15 @@
+[package]
+name = "ferrite-cdp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+ferrite-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true

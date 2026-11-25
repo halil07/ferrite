@@ -1,0 +1,177 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Ferrite E2E",
+  "scopeName": "source.ferrite",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#refs" },
+    { "include": "#durations" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#actions" },
+    { "include": "#assertions" },
+    { "include": "#modifiers" },
+    { "include": "#constants" },
+    { "include": "#macro-call" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.ferrite",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.line.number-sign.ferrite",
+          "match": "#.*$"
+        },
+        {
+          "name": "comment.block.ferrite",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.triple.ferrite",
+          "begin": "\"\"\"",
+          "end": "\"\"\"",
+          "patterns": [
+            { "include": "#string-interpolation" },
+            { "include": "#string-escapes" }
+          ]
+        },
+        {
+          "name": "string.quoted.double.ferrite",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "include": "#string-interpolation" },
+            { "include": "#string-escapes" }
+          ]
+        }
+      ]
+    },
+    "string-escapes": {
+      "patterns": [
+        {
+          "name": "constant.character.escape.ferrite",
+          "match": "\\\\([\"\\\\nrt$])"
+        }
+      ]
+    },
+    "string-interpolation": {
+      "patterns": [
+        {
+          "name": "meta.embedded.line.interpolation.ferrite",
+          "begin": "\\$\\{",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.template-expression.begin.ferrite" }
+          },
+          "end": "\\}",
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.template-expression.end.ferrite" }
+          },
+          "patterns": [
+            {
+              "name": "variable.other.interpolated.ferrite",
+              "match": "[A-Za-z_][A-Za-z0-9_]*"
+            }
+          ]
+        }
+      ]
+    },
+    "refs": {
+      "patterns": [
+        {
+          "name": "entity.name.tag.ref.ferrite",
+          "match": "@[A-Za-z0-9_-]+"
+        }
+      ]
+    },
+    "durations": {
+      "patterns": [
+        {
+          "name": "constant.numeric.duration.ferrite",
+          "match": "\\b[0-9]+(ms|s|m)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.ferrite",
+          "match": "-?\\b[0-9]+\\.[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.ferrite",
+          "match": "-?\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.ferrite",
+          "match": "\\b(suite|import|beforeEach|macro|test|let|use)\\b"
+        }
+      ]
+    },
+    "actions": {
+      "patterns": [
+        {
+          "name": "support.function.action.ferrite",
+          "match": "\\b(goto|snapshot|click|dblclick|hover|fill|press|type|reload|wait|mock|cdp|tab)\\b"
+        }
+      ]
+    },
+    "assertions": {
+      "patterns": [
+        {
+          "name": "keyword.other.assertion.ferrite",
+          "match": "\\b(expect|visible|hidden|screenshot)\\b"
+        }
+      ]
+    },
+    "modifiers": {
+      "patterns": [
+        {
+          "name": "storage.modifier.ferrite",
+          "match": "\\b(role|text|nth|exact|interactive|full|timeout|threshold|maxDiff|max_diff|status|pattern|header|body|file|load|domcontentloaded|commit|ignoreCache|ignore_cache)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.ferrite",
+          "match": "\\b(true|false|null)\\b"
+        }
+      ]
+    },
+    "macro-call": {
+      "patterns": [
+        {
+          "name": "entity.name.function.macro.ferrite",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.section.braces.ferrite",
+          "match": "[{}()\\[\\]]"
+        },
+        {
+          "name": "keyword.operator.assignment.ferrite",
+          "match": "[=,:]"
+        }
+      ]
+    }
+  }
+}

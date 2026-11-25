@@ -1,0 +1,42 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+base64 = "0.22"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+getrandom = "0.3"
+png = "0.18"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.27", default-features = false, features = ["handshake", "connect"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = "2"
+
+ferrite-core = { path = "crates/ferrite-core" }
+ferrite-ipc = { path = "crates/ferrite-ipc" }
+ferrite-cdp = { path = "crates/ferrite-cdp" }
+ferrite-locator = { path = "crates/ferrite-locator" }
+ferrite-visual = { path = "crates/ferrite-visual" }
+ferrite-daemon = { path = "crates/ferrite-daemon" }
+ferrite-dsl = { path = "crates/ferrite-dsl" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

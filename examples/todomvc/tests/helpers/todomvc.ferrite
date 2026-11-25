@@ -1,0 +1,47 @@
+// Shared helpers and reusable actions for https://todomvc.com/examples/react/dist/
+
+let app_url = "https://todomvc.com/examples/react/dist/"
+
+macro open_clean_app() {
+  goto "about:blank" wait load timeout 10s
+  goto "${app_url}" wait load timeout 15s
+  expect visible "todos" timeout 10s
+}
+
+macro add_todo(title) {
+  fill role "textbox" "${title}" timeout 5s
+  press "Enter"
+}
+
+macro toggle_all() {
+  click role "checkbox" nth 0 timeout 5s
+}
+
+macro toggle_first_todo() {
+  click role "checkbox" nth 1 timeout 5s
+}
+
+macro toggle_second_todo() {
+  click role "checkbox" nth 2 timeout 5s
+}
+
+macro edit_todo(old_title, new_title) {
+  dblclick text "${old_title}" timeout 5s
+  press "Control+a"
+  press "Backspace"
+  type "${new_title}"
+  press "Enter"
+}
+
+macro cancel_edit_todo(old_title, draft_title) {
+  dblclick text "${old_title}" timeout 5s
+  press "Control+a"
+  press "Backspace"
+  type "${draft_title}"
+  press "Escape"
+}
+
+macro delete_todo(title) {
+  hover text "${title}" timeout 5s
+  click role "button" "" exact timeout 5s
+}

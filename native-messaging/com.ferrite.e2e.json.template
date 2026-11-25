@@ -1,0 +1,9 @@
+{
+  "name": "com.ferrite.e2e",
+  "description": "Ferrite E2E Native Messaging Host (CDP + Tokio Automation Daemon)",
+  "path": "__BINARY_PATH__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://__EXTENSION_ID__/"
+  ]
+}

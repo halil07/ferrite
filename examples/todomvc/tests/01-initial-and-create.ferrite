@@ -1,0 +1,34 @@
+suite "todomvc-01-initial-and-create"
+import "./helpers/todomvc.ferrite"
+
+beforeEach {
+  use open_clean_app()
+}
+
+test "initial-empty-state" {
+  expect visible "todos"
+  expect hidden "item left"
+  expect hidden "Clear completed"
+}
+
+test "create-single-and-multiple-todos" {
+  use add_todo("Buy milk")
+  expect visible "Buy milk"
+  expect visible "1 item left"
+
+  use add_todo("Walk the dog")
+  use add_todo("Read Rust book")
+  expect visible "Walk the dog"
+  expect visible "Read Rust book"
+  expect visible "3 items left"
+}
+
+test "trim-whitespace-and-ignore-too-short-inputs" {
+  // Single-character or empty inputs are ignored by React TodoMVC (min length >= 2)
+  use add_todo("a")
+  expect hidden "1 item left"
+
+  use add_todo("   Learn Ferrite   ")
+  expect visible "Learn Ferrite" exact
+  expect visible "1 item left"
+}

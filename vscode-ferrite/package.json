@@ -1,0 +1,43 @@
+{
+  "name": "ferrite-lang",
+  "displayName": "Ferrite E2E (.ferrite)",
+  "description": "Syntax highlighting, bracket matching, and snippets for .ferrite E2E test files.",
+  "version": "0.1.0",
+  "publisher": "ferrite-e2e",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Testing"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "ferrite",
+        "aliases": [
+          "Ferrite E2E",
+          "ferrite"
+        ],
+        "extensions": [
+          ".ferrite"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ferrite",
+        "scopeName": "source.ferrite",
+        "path": "./syntaxes/ferrite.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "ferrite",
+        "path": "./snippets/ferrite.code-snippets"
+      }
+    ]
+  }
+}

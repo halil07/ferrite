@@ -1,0 +1,37 @@
+suite "todomvc-04-filters-and-clear"
+import "./helpers/todomvc.ferrite"
+
+beforeEach {
+  use open_clean_app()
+  use add_todo("Active One")
+  use add_todo("Completed One")
+  use add_todo("Active Two")
+  use toggle_second_todo()
+  expect visible "2 items left"
+}
+
+test "filter-active-completed-and-all-routes" {
+  click role "link" "Active" exact timeout 5s
+  expect visible "Active One"
+  expect visible "Active Two"
+  expect hidden "Completed One"
+
+  click role "link" "Completed" exact timeout 5s
+  expect visible "Completed One"
+  expect hidden "Active One"
+  expect hidden "Active Two"
+
+  click role "link" "All" exact timeout 5s
+  expect visible "Active One"
+  expect visible "Completed One"
+  expect visible "Active Two"
+}
+
+test "clear-completed-removes-only-finished-todos" {
+  click role "button" "Clear completed" exact timeout 5s
+  expect hidden "Completed One"
+  expect hidden "Clear completed"
+  expect visible "Active One"
+  expect visible "Active Two"
+  expect visible "2 items left"
+}

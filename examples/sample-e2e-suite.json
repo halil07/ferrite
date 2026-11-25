@@ -1,0 +1,67 @@
+{
+  "name": "ferrite-login-e2e-demo",
+  "cases": [
+    {
+      "name": "authenticate-and-verify-dashboard",
+      "steps": [
+        {
+          "step": "mock_route",
+          "url_substring": "/api/session",
+          "status": 200,
+          "headers": {
+            "content-type": "application/json"
+          },
+          "body": "{\"authenticated\":true,\"user\":\"ada\"}",
+          "patterns": ["*://example.com/*"]
+        },
+        {
+          "step": "mock_route",
+          "url_substring": "/login",
+          "status": 200,
+          "headers": {
+            "content-type": "text/html; charset=utf-8"
+          },
+          "body": "<!doctype html><html><head><meta charset=\"utf-8\"><title>Ferrite Login</title><style>body{font-family:system-ui,sans-serif;padding:32px;background:#f8fafc;color:#0f172a}main{max-width:420px;margin:auto;background:#fff;padding:24px;border:1px solid #cbd5e1;border-radius:12px}label,input,button{display:block;width:100%;margin-top:10px;box-sizing:border-box}input,button{padding:10px;font-size:14px}button{background:#0f172a;color:#fff;border:0;border-radius:6px;cursor:pointer}</style></head><body><main><h1>Ferrite Portal</h1><form aria-label=\"Login\"><label for=\"email\">Email</label><input id=\"email\" type=\"email\" placeholder=\"name@example.com\" /><button id=\"signin\" type=\"button\">Sign In</button></form><section id=\"out\" aria-live=\"polite\"></section></main><script>document.getElementById('signin').addEventListener('click',async()=>{const email=document.getElementById('email').value;const res=await fetch('/api/session');const data=await res.json();const h=document.createElement('h2');h.textContent='Dashboard Ready';const p=document.createElement('p');p.textContent='Welcome '+data.user+' ('+email+')';document.getElementById('out').replaceChildren(h,p);});</script></body></html>",
+          "patterns": ["*://example.com/*"]
+        },
+        {
+          "step": "goto",
+          "url": "https://example.com/login",
+          "wait_until": "load",
+          "timeout_ms": 15000
+        },
+        {
+          "step": "snapshot",
+          "interactive_only": true
+        },
+        {
+          "step": "fill_ref",
+          "ref_id": "e1",
+          "text": "ada@example.com"
+        },
+        {
+          "step": "click_role",
+          "role": "button",
+          "name": "Sign In",
+          "exact": true
+        },
+        {
+          "step": "assert_visible",
+          "text": "Dashboard Ready",
+          "exact": false
+        },
+        {
+          "step": "assert_visible",
+          "text": "Welcome ada (ada@example.com)",
+          "exact": false
+        },
+        {
+          "step": "assert_screenshot",
+          "name": "dashboard-ready",
+          "max_diff_ratio": 0.001,
+          "threshold": 0.1
+        }
+      ]
+    }
+  ]
+}

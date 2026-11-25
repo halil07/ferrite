@@ -1,0 +1,67 @@
+{
+  "Suite Header": {
+    "prefix": "suite",
+    "body": [
+      "suite \"${1:my-e2e-suite}\"",
+      "",
+      "test \"${2:happy-path}\" {",
+      "  goto \"${3:https://example.com}\" wait load timeout 15s",
+      "  snapshot interactive",
+      "  $0",
+      "}"
+    ],
+    "description": "Create a .ferrite E2E suite skeleton"
+  },
+  "Test Block": {
+    "prefix": "test",
+    "body": [
+      "test \"${1:test-case-name}\" {",
+      "  $0",
+      "}"
+    ],
+    "description": "Add a test case block"
+  },
+  "Macro Definition": {
+    "prefix": "macro",
+    "body": [
+      "macro ${1:helper_name}(${2:param}) {",
+      "  $0",
+      "}"
+    ],
+    "description": "Define a reusable .ferrite macro"
+  },
+  "Mock Route Inline": {
+    "prefix": "mock",
+    "body": [
+      "mock \"${1:/api/endpoint}\" status ${2:200} pattern \"${3:*://example.com/*}\" {",
+      "  header \"content-type\" = \"application/json\"",
+      "  body \"${4:{\\\"ok\\\":true}}\"",
+      "}"
+    ],
+    "description": "Intercept and mock an HTTP route via CDP Fetch"
+  },
+  "Mock Route File": {
+    "prefix": "mock-file",
+    "body": [
+      "mock \"${1:/login}\" status ${2:200} pattern \"${3:*://example.com/*}\" {",
+      "  header \"content-type\" = \"text/html; charset=utf-8\"",
+      "  body file \"${4:./fixtures/page.html}\"",
+      "}"
+    ],
+    "description": "Mock an HTTP route using a fixture file on disk"
+  },
+  "Expect Visible": {
+    "prefix": "expect-vis",
+    "body": [
+      "expect visible \"${1:Dashboard Ready}\" timeout ${2:5s}"
+    ],
+    "description": "Assert text is visible in the Accessibility Tree"
+  },
+  "Expect Screenshot": {
+    "prefix": "expect-ss",
+    "body": [
+      "expect screenshot \"${1:screen-name}\" threshold ${2:0.1} maxDiff ${3:0.001}"
+    ],
+    "description": "Assert pixelmatch visual regression baseline"
+  }
+}

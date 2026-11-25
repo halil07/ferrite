@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Ferrite E2E Bridge</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        margin: 14px;
+        width: 300px;
+        color: #0f172a;
+        background: #f8fafc;
+      }
+      h1 {
+        font-size: 15px;
+        margin: 0 0 10px 0;
+      }
+      .card {
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 10px;
+        margin-bottom: 10px;
+        font-size: 12px;
+      }
+      .status-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 4px;
+      }
+      .badge-ok {
+        color: #15803d;
+        font-weight: 600;
+      }
+      .badge-err {
+        color: #b91c1c;
+        font-weight: 600;
+      }
+      .actions {
+        display: flex;
+        gap: 8px;
+      }
+      button {
+        flex: 1;
+        padding: 7px 10px;
+        border-radius: 6px;
+        border: 1px solid #334155;
+        background: #0f172a;
+        color: #ffffff;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #ffffff;
+        color: #0f172a;
+      }
+      #error-box {
+        color: #b91c1c;
+        font-size: 11px;
+        margin-top: 6px;
+        word-break: break-word;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Ferrite E2E Bridge (MV3)</h1>
+    <div class="card">
+      <div class="status-row">
+        <span>Native Host:</span>
+        <span id="host-status">Checking...</span>
+      </div>
+      <div class="status-row">
+        <span>Attached Tabs:</span>
+        <span id="attached-count">0</span>
+      </div>
+      <div class="status-row">
+        <span>Active Tab:</span>
+        <span id="active-tab-status">-</span>
+      </div>
+      <div id="error-box"></div>
+    </div>
+    <div class="actions">
+      <button id="toggle-attach">Attach Tab</button>
+      <button id="reconnect" class="secondary">Reconnect</button>
+    </div>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

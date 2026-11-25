@@ -1,0 +1,3 @@
+name = "todomvc-react-e2e"
+test_dir = "tests"
+snapshots_dir = ".ferrite-snapshots"

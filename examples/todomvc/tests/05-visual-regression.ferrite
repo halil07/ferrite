@@ -1,0 +1,17 @@
+suite "todomvc-05-visual-regression"
+import "./helpers/todomvc.ferrite"
+
+beforeEach {
+  use open_clean_app()
+}
+
+test "visual-baseline-empty-and-mixed-list" {
+  expect screenshot "todomvc-empty" threshold 0.1 maxDiff 0.005
+
+  use add_todo("Ship Ferrite DSL")
+  use add_todo("Review visual diff")
+  use toggle_first_todo()
+  expect visible "1 item left"
+
+  expect screenshot "todomvc-mixed-list" threshold 0.1 maxDiff 0.005
+}

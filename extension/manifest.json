@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Ferrite E2E Bridge",
+  "version": "0.1.0",
+  "description": "Transparent CDP proxy bridging Chrome tabs to the Ferrite Rust E2E automation engine via Native Messaging.",
+  "minimum_chrome_version": "120",
+  "permissions": [
+    "debugger",
+    "nativeMessaging",
+    "tabs",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Ferrite E2E Bridge"
+  }
+}

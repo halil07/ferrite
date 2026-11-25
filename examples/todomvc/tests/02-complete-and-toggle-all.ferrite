@@ -1,0 +1,37 @@
+suite "todomvc-02-complete-and-toggle-all"
+import "./helpers/todomvc.ferrite"
+
+beforeEach {
+  use open_clean_app()
+}
+
+test "toggle-single-todo-complete-and-back" {
+  use add_todo("Task One")
+  use add_todo("Task Two")
+  expect visible "2 items left"
+
+  // nth 0 is Toggle All, nth 1 is the first todo item checkbox
+  use toggle_first_todo()
+  expect visible "1 item left"
+  expect visible "Clear completed"
+
+  // Uncheck back to active
+  use toggle_first_todo()
+  expect visible "2 items left"
+  expect hidden "Clear completed"
+}
+
+test "toggle-all-complete-and-uncomplete" {
+  use add_todo("Alpha")
+  use add_todo("Beta")
+  use add_todo("Gamma")
+  expect visible "3 items left"
+
+  use toggle_all()
+  expect visible "0 items left"
+  expect visible "Clear completed"
+
+  use toggle_all()
+  expect visible "3 items left"
+  expect hidden "Clear completed"
+}

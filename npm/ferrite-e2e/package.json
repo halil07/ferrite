@@ -1,0 +1,33 @@
+{
+  "name": "ferrite-e2e",
+  "version": "0.1.0",
+  "description": "Ferrite E2E: .ferrite DSL + Chrome MV3 Extension + Native Messaging + Tokio Rust E2E Automation Engine",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "ferrite": "bin/ferrite.mjs"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@ferrite-e2e/windows-x64": "0.1.0",
+    "@ferrite-e2e/darwin-arm64": "0.1.0",
+    "@ferrite-e2e/darwin-x64": "0.1.0",
+    "@ferrite-e2e/linux-x64": "0.1.0",
+    "@ferrite-e2e/linux-arm64": "0.1.0"
+  },
+  "keywords": [
+    "e2e",
+    "testing",
+    "cdp",
+    "chrome-extension",
+    "native-messaging",
+    "visual-regression",
+    "rust"
+  ]
+}
