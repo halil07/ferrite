@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod mcp;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -141,6 +143,22 @@ enum Command {
         binary_path: Option<PathBuf>,
     },
 
+    /// Run a Model Context Protocol (MCP) JSON-RPC 2.0 server over stdio for AI agents.
+    Mcp {
+        #[arg(long)]
+        ws_url: Option<String>,
+
+        #[arg(long)]
+        token: Option<String>,
+
+        /// Optional default Chrome tabId to target when a tool call omits `tabId`.
+        #[arg(long)]
+        tab_id: Option<i64>,
+
+        #[arg(long)]
+        snapshots_dir: Option<PathBuf>,
+    },
+
     /// Print a Chrome Native Messaging host manifest JSON (`com.ferrite.e2e`).
     PrintManifest {
         #[arg(long)]
@@ -242,6 +260,21 @@ async fn main() -> anyhow::Result<()> {
             browser,
             binary_path,
         } => run_setup(extension_id, browser, binary_path),
+        Command::Mcp {
+            ws_url,
+            token,
+            tab_id,
+            snapshots_dir,
+        } => {
+            init_stderr_tracing();
+            let server = mcp::McpServer::new(mcp::McpConfig {
+                ws_url,
+                token,
+                default_tab_id: tab_id,
+                snapshots_dir,
+            });
+            server.run_stdio().await
+        }
         Command::PrintManifest {
             extension_id,
             binary_path,

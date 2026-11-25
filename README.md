@@ -105,6 +105,56 @@ Tarayıcıda yaptığınız tıklama ve yazma adımlarını otomatik olarak `.fe
 
 Testlerinizde yakalanmamış JS hatalarını veya `console.error` çıktılarını yakalamak için `console start` ve `expect noConsoleErrors` / `expect console "..."` ifadelerini kullanabilirsiniz. Profil güvenliği için yıkıcı `Network.clearBrowserCookies`, `Network.clearBrowserCache` ve `Browser.close` CDP komutları hem eklenti hem daemon katmanında engellenir.
 
+## Yapay Zeka için MCP Sunucusu (`ferrite mcp`)
+
+Ferrite, Claude Desktop, Cursor, Antigravity ve diğer MCP uyumlu yapay zeka istemcilerinin Chrome'da **attach edilmiş sekmelere** doğrudan erişip JavaScript çalıştırabilmesi (`browser_evaluate`), Accessibility Tree okuyabilmesi (`browser_snapshot`), tıklama/yazma yapabilmesi, ekran görüntüsü alabilmesi (`browser_screenshot`) ve `.ferrite` testlerini çalıştırabilmesi (`browser_run_ferrite`) için yerleşik bir **stdio MCP (JSON-RPC 2.0)** sunucusu içerir.
+
+MCP istemcinizin yapılandırmasına ekleyin (npm üzerinden):
+
+```json
+{
+  "mcpServers": {
+    "ferrite": {
+      "command": "npx",
+      "args": ["-y", "@halil07/ferrite", "mcp"]
+    }
+  }
+}
+```
+
+Veya yerel derlenmiş binary ile:
+
+```json
+{
+  "mcpServers": {
+    "ferrite": {
+      "command": "C:\\Users\\<kullanici>\\projects\\test_project\\target\\release\\ferrite.exe",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+> Chrome eklentisi `Connected` durumundayken `ferrite mcp`, `daemon-connection.json` dosyasını her çağrıda otomatik okur; Chrome veya eklenti yeniden başlatılsa bile yapay zeka oturumu kopmaz.
+
+| Araç | Görevi |
+| --- | --- |
+| `browser_list_tabs` | Açık Chrome sekmelerini (`tabId`, `title`, `url`, `attached`, `attachable`) listeler (`attachedOnly: true` filtresiyle sadece attach edilmiş sekmeleri getirir). |
+| `browser_attach_tab` | Var olan bir `tabId`'ye attach olur veya `createUrl` ile yeni sekme açıp attach olur. |
+| `browser_detach_tab` | Belirtilen sekmeden debugger'ı ayırır. |
+| `browser_evaluate` | Attach edilmiş sekmede JavaScript çalıştırır (top-level `await`, `isolatedWorld`, hata detayları ve çıktı sınırı). |
+| `browser_run_ferrite` | Satır içi `.ferrite` DSL kodunu veya bir `.ferrite` dosyasını derleyip canlı attach edilmiş sekmede çalıştırır ve adım adım sonuç döner. |
+| `browser_snapshot` | Düşük token'lı, deterministik `@e1`, `@e2` referanslı Accessibility Tree özeti alır. |
+| `browser_click` | `@eN` ref, ARIA `role`+`name` veya `doubleClick`+`text` ile tıklar. |
+| `browser_fill` | `@eN` ref veya ARIA `role`+`name` ile alanı temizleyip metin girer. |
+| `browser_hover` | `@eN` ref veya metin üzerine fare getirir. |
+| `browser_press_key` | Klavye tuşu (`Enter`, `Escape`, `Control+a` vb.) basar veya `typeText` ile doğrudan metin yazar. |
+| `browser_navigate` / `browser_reload` | Sekmeyi URL'e yönlendirir veya yeniler. |
+| `browser_screenshot` | Sekmenin ekran görüntüsünü alır ve multimodal AI modellerinin doğrudan görebileceği yerel MCP `image` (`image/png`) bloğu olarak döner. |
+| `browser_console` | Konsol dinlemeyi başlatır, listeler (`errorsOnly`) veya temizler. |
+| `browser_network` | Ağ izlemeyi başlatır veya yakalanan istekleri (`urlContains`) listeler. |
+| `browser_cdp` | Gelişmiş senaryolar için ham CDP komutu gönderir (yıkıcı profil-geneli komutlar engellidir). |
+
 ## GitHub Release ve Paketleme
 
 - `.github/workflows/release.yml`: `v*` etiketi push edildiğinde (veya manuel `workflow_dispatch` ile) tüm testleri çalıştırır; Linux (`x64`/`arm64`), macOS (`x64`/`arm64`), Windows (`x64`) release binary'lerini, Chrome MV3 eklenti zip'ini ve VS Code eklenti zip'ini derleyip GitHub Release olarak yayınlar; ayrıca `v*` etiketlerinde 5 platform ikili paketiyle birlikte `@halil07/ferrite` paketini npm'e yayınlar (`NPM_TOKEN` repository secret gerektirir).

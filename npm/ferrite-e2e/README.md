@@ -24,3 +24,18 @@ To compile `.ferrite` files into JSON `TestSuite` IR without executing:
 ```bash
 npx ferrite compile tests/login.ferrite
 ```
+
+## AI Agent MCP Server
+
+Expose your attached Chrome tabs (JS evaluation, AX snapshots, clicks/fills, screenshots, console/network logs, and `.ferrite` script execution) to any MCP-compatible AI client (Claude Desktop, Cursor, Antigravity, VS Code):
+
+```json
+{
+  "mcpServers": {
+    "ferrite": {
+      "command": "npx",
+      "args": ["-y", "@halil07/ferrite", "mcp"]
+    }
+  }
+}
+```

@@ -5,6 +5,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use ferrite_cdp::{
     ActionRecorder, ConsoleCollector, ConsoleLevel, FetchInterceptor, LoadState, MockRouteResponse,
     NetworkDomain, NetworkMonitor, PageDomain, ScreenshotOptions, TargetDomain,
@@ -533,6 +535,167 @@ impl E2eSession {
         json!({ "tabId": tab_id, "cleared": true })
     }
 
+    pub fn console_list(&self, tab_id: i64, errors_only: bool, limit: usize) -> Value {
+        let entries = {
+            let guard = self.tab_runtimes.lock().expect("tab_runtimes mutex poisoned");
+            guard
+                .get(&tab_id)
+                .map(|r| {
+                    if errors_only {
+                        r.console_collector.errors()
+                    } else {
+                        r.console_collector.entries()
+                    }
+                })
+                .unwrap_or_default()
+        };
+        let total = entries.len();
+        let cap = limit.clamp(1, 500);
+        let skip = total.saturating_sub(cap);
+        let slice: Vec<_> = entries.into_iter().skip(skip).collect();
+        json!({
+            "tabId": tab_id,
+            "total": total,
+            "returned": slice.len(),
+            "entries": slice,
+        })
+    }
+
+    pub fn network_list(&self, tab_id: i64, url_contains: Option<&str>, limit: usize) -> Value {
+        let (inflight, completed) = {
+            let guard = self.tab_runtimes.lock().expect("tab_runtimes mutex poisoned");
+            guard
+                .get(&tab_id)
+                .map(|r| {
+                    (
+                        r.network_monitor.inflight_count(),
+                        r.network_monitor.completed_exchanges(),
+                    )
+                })
+                .unwrap_or_else(|| (0, Vec::new()))
+        };
+        let filtered: Vec<_> = match url_contains.filter(|s| !s.is_empty()) {
+            Some(needle) => completed
+                .into_iter()
+                .filter(|ex| ex.url.contains(needle))
+                .collect(),
+            None => completed,
+        };
+        let total = filtered.len();
+        let cap = limit.clamp(1, 500);
+        let skip = total.saturating_sub(cap);
+        let slice: Vec<_> = filtered.into_iter().skip(skip).collect();
+        json!({
+            "tabId": tab_id,
+            "inflightCount": inflight,
+            "total": total,
+            "returned": slice.len(),
+            "exchanges": slice,
+        })
+    }
+
+    /// Evaluates JavaScript inside an attached tab (supporting top-level `await` via `replMode`),
+    /// returning a serialized JSON value or formatted JS exception details.
+    pub async fn evaluate(
+        &self,
+        tab_id: i64,
+        expression: &str,
+        await_promise: bool,
+        isolated_world: bool,
+        max_output_chars: usize,
+    ) -> anyhow::Result<Value> {
+        self.transport.attach_tab(tab_id).await?;
+
+        let mut eval_params = json!({
+            "expression": expression,
+            "awaitPromise": await_promise,
+            "returnByValue": true,
+            "userGesture": true,
+            "replMode": true,
+        });
+
+        if isolated_world {
+            let page = PageDomain::new(self.transport.clone(), tab_id);
+            let frame_tree = page.get_frame_tree().await?;
+            let ctx_id = page
+                .create_isolated_world(&frame_tree.frame.id, "ferrite-mcp", None)
+                .await?;
+            eval_params["contextId"] = json!(ctx_id);
+        }
+
+        let res = self
+            .transport
+            .send_cdp(tab_id, "Runtime.evaluate", eval_params, None)
+            .await?;
+
+        if let Some(exc) = res.get("exceptionDetails") {
+            let desc = exc
+                .get("exception")
+                .and_then(|e| e.get("description"))
+                .and_then(Value::as_str)
+                .or_else(|| exc.get("text").and_then(Value::as_str))
+                .unwrap_or("Uncaught JavaScript exception");
+            let line = exc.get("lineNumber").and_then(Value::as_u64).unwrap_or(0);
+            let col = exc.get("columnNumber").and_then(Value::as_u64).unwrap_or(0);
+            anyhow::bail!("JavaScript evaluation error at {line}:{col}: {desc}");
+        }
+
+        let remote = res.get("result").cloned().unwrap_or(Value::Null);
+        let value_type = remote
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("undefined")
+            .to_string();
+
+        let (raw_value, is_undefined) = if let Some(val) = remote.get("value") {
+            (val.clone(), false)
+        } else if let Some(unser) = remote.get("unserializableValue").and_then(Value::as_str) {
+            (Value::String(unser.to_string()), false)
+        } else if value_type == "undefined" {
+            (Value::Null, true)
+        } else if let Some(desc) = remote.get("description").and_then(Value::as_str) {
+            (Value::String(desc.to_string()), false)
+        } else {
+            (Value::Null, false)
+        };
+
+        let max_chars = max_output_chars.clamp(256, 256_000);
+        let serialized = serde_json::to_string(&raw_value).unwrap_or_default();
+        if serialized.chars().count() > max_chars {
+            let truncated: String = serialized.chars().take(max_chars).collect();
+            return Ok(json!({
+                "tabId": tab_id,
+                "type": value_type,
+                "truncated": true,
+                "valuePreview": format!("{truncated}... [truncated; original {} chars]", serialized.chars().count()),
+            }));
+        }
+
+        Ok(json!({
+            "tabId": tab_id,
+            "type": value_type,
+            "undefined": is_undefined,
+            "truncated": false,
+            "value": raw_value,
+        }))
+    }
+
+    pub async fn screenshot(&self, tab_id: i64, full_page: bool) -> anyhow::Result<Value> {
+        self.transport.attach_tab(tab_id).await?;
+        let page = PageDomain::new(self.transport.clone(), tab_id);
+        let opts = ScreenshotOptions {
+            capture_beyond_viewport: full_page,
+            ..ScreenshotOptions::default()
+        };
+        let png_bytes = page.capture_screenshot(&opts).await?;
+        Ok(json!({
+            "tabId": tab_id,
+            "mimeType": "image/png",
+            "bytes": png_bytes.len(),
+            "dataBase64": STANDARD.encode(&png_bytes),
+        }))
+    }
+
     pub async fn assert_no_console_errors(&self, tab_id: i64) -> anyhow::Result<Value> {
         let errors = {
             let guard = self.tab_runtimes.lock().expect("tab_runtimes mutex poisoned");
@@ -700,6 +863,12 @@ impl E2eSession {
                 let tab_id = self.resolve_tab(req_tab).await?;
                 self.transport.attach_tab(tab_id).await?;
                 Ok(json!({ "tabId": tab_id, "attached": true }))
+            }
+            "tab.detach" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                self.transport.detach_tab(tab_id).await?;
+                self.cleanup_tab(tab_id);
+                Ok(json!({ "tabId": tab_id, "detached": true }))
             }
             "tab.close" => {
                 let tab_id = self.resolve_tab(req_tab).await?;
@@ -925,13 +1094,69 @@ impl E2eSession {
                 let tab_id = self.resolve_tab(req_tab).await?;
                 self.start_network_monitor(tab_id).await
             }
+            "network.list" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                let url_contains = params.get("urlContains").and_then(Value::as_str);
+                let limit = params
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(100) as usize;
+                Ok(self.network_list(tab_id, url_contains, limit))
+            }
             "console.start" => {
                 let tab_id = self.resolve_tab(req_tab).await?;
                 self.console_start(tab_id).await
             }
+            "console.list" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                let errors_only = params
+                    .get("errorsOnly")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let limit = params
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(100) as usize;
+                Ok(self.console_list(tab_id, errors_only, limit))
+            }
             "console.clear" => {
                 let tab_id = self.resolve_tab(req_tab).await?;
                 Ok(self.console_clear(tab_id))
+            }
+            "evaluate" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                let expression = params
+                    .get("expression")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("missing `expression`"))?;
+                let await_promise = params
+                    .get("awaitPromise")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                let isolated_world = params
+                    .get("isolatedWorld")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let max_output_chars = params
+                    .get("maxOutputChars")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(32_000) as usize;
+                self.evaluate(
+                    tab_id,
+                    expression,
+                    await_promise,
+                    isolated_world,
+                    max_output_chars,
+                )
+                .await
+            }
+            "screenshot" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                let full_page = params
+                    .get("fullPage")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                self.screenshot(tab_id, full_page).await
             }
             "assert_no_console_errors" => {
                 let tab_id = self.resolve_tab(req_tab).await?;
