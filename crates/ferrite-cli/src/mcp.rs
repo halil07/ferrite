@@ -387,6 +387,21 @@ impl McpServer {
                     .get("doubleClick")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
+                if let Some(selector) = args.get("css").and_then(Value::as_str) {
+                    let action = if double_click { "dblclick_css" } else { "click_css" };
+                    let res = self
+                        .call_daemon(
+                            action,
+                            json!({
+                                "tabId": tab_id,
+                                "selector": selector,
+                                "nth": args.get("nth").and_then(Value::as_u64).unwrap_or(0),
+                                "timeoutMs": args.get("timeoutMs").and_then(Value::as_u64).unwrap_or(5_000),
+                            }),
+                        )
+                        .await?;
+                    return Ok(tool_json(&res));
+                }
                 if let Some(ref_id) = args.get("refId").and_then(Value::as_str) {
                     let action = if double_click { "dblclick_ref" } else { "click_ref" };
                     let res = self
@@ -428,6 +443,21 @@ impl McpServer {
 
             "browser_fill" => {
                 let text = req_str(args, "text")?;
+                if let Some(selector) = args.get("css").and_then(Value::as_str) {
+                    let res = self
+                        .call_daemon(
+                            "fill_css",
+                            json!({
+                                "tabId": tab_id,
+                                "selector": selector,
+                                "text": text,
+                                "nth": args.get("nth").and_then(Value::as_u64).unwrap_or(0),
+                                "timeoutMs": args.get("timeoutMs").and_then(Value::as_u64).unwrap_or(5_000),
+                            }),
+                        )
+                        .await?;
+                    return Ok(tool_json(&res));
+                }
                 if let Some(ref_id) = args.get("refId").and_then(Value::as_str) {
                     let res = self
                         .call_daemon(
@@ -456,6 +486,20 @@ impl McpServer {
             }
 
             "browser_hover" => {
+                if let Some(selector) = args.get("css").and_then(Value::as_str) {
+                    let res = self
+                        .call_daemon(
+                            "hover_css",
+                            json!({
+                                "tabId": tab_id,
+                                "selector": selector,
+                                "nth": args.get("nth").and_then(Value::as_u64).unwrap_or(0),
+                                "timeoutMs": args.get("timeoutMs").and_then(Value::as_u64).unwrap_or(5_000),
+                            }),
+                        )
+                        .await?;
+                    return Ok(tool_json(&res));
+                }
                 if let Some(ref_id) = args.get("refId").and_then(Value::as_str) {
                     let res = self
                         .call_daemon("hover_ref", json!({ "tabId": tab_id, "refId": ref_id }))
@@ -867,11 +911,12 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "browser_click",
-            "description": "Click (or double-click) an element by `@eN` refId from `browser_snapshot`, or by ARIA role + accessible name, or by visible text when `doubleClick` is true.",
+            "description": "Click (or double-click) an element by CSS selector (`css`, querySelectorAll + nth), `@eN` refId from `browser_snapshot`, ARIA role + accessible name, or visible text when `doubleClick` is true.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "tabId": { "type": "integer" },
+                    "css": { "type": "string", "description": "CSS selector (e.g. `#submit-btn`, `.todo-list li .toggle`)." },
                     "refId": { "type": "string", "description": "Ref ID from browser_snapshot, e.g. `e1`." },
                     "role": { "type": "string", "description": "ARIA role (e.g. `button`, `link`, `checkbox`)." },
                     "name": { "type": "string", "description": "Accessible name filter when using `role`." },
@@ -886,11 +931,12 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "browser_fill",
-            "description": "Focus, clear, and fill an input/textbox by `@eN` refId or by ARIA role + accessible name.",
+            "description": "Focus, clear, and fill an input/textbox by CSS selector (`css`), `@eN` refId, or ARIA role + accessible name.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "tabId": { "type": "integer" },
+                    "css": { "type": "string", "description": "CSS selector (e.g. `#email`, `input.new-todo`)." },
                     "refId": { "type": "string", "description": "Ref ID from browser_snapshot, e.g. `e2`." },
                     "role": { "type": "string", "description": "ARIA role (usually `textbox`)." },
                     "name": { "type": "string", "description": "Accessible name or placeholder." },
@@ -905,11 +951,12 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "browser_hover",
-            "description": "Hover the mouse pointer over an element by `@eN` refId or visible text.",
+            "description": "Hover the mouse pointer over an element by CSS selector (`css`), `@eN` refId, or visible text.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "tabId": { "type": "integer" },
+                    "css": { "type": "string", "description": "CSS selector (e.g. `.todo-list li`)." },
                     "refId": { "type": "string" },
                     "text": { "type": "string" },
                     "exact": { "type": "boolean" },

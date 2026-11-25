@@ -7,30 +7,37 @@ beforeEach {
   use add_todo("Completed One")
   use add_todo("Active Two")
   use toggle_second_todo()
+  expect count css ".todo-list li" 3
+  expect count css ".todo-list li.completed" 1
   expect visible "2 items left"
 }
 
 test "filter-active-completed-and-all-routes" {
-  click role "link" "Active" exact timeout 5s
+  click css ".filters a[href=\"#/active\"]" timeout 5s
+  expect count css ".todo-list li" 2
   expect visible "Active One"
   expect visible "Active Two"
   expect hidden "Completed One"
 
-  click role "link" "Completed" exact timeout 5s
+  click css ".filters a[href=\"#/completed\"]" timeout 5s
+  expect count css ".todo-list li" 1
   expect visible "Completed One"
   expect hidden "Active One"
   expect hidden "Active Two"
 
-  click role "link" "All" exact timeout 5s
+  click css ".filters a[href=\"#/\"]" timeout 5s
+  expect count css ".todo-list li" 3
   expect visible "Active One"
   expect visible "Completed One"
   expect visible "Active Two"
 }
 
 test "clear-completed-removes-only-finished-todos" {
-  click role "button" "Clear completed" exact timeout 5s
+  click css ".clear-completed" timeout 5s
+  expect count css ".todo-list li" 2
+  expect count css ".todo-list li.completed" 0
   expect hidden "Completed One"
-  expect hidden "Clear completed"
+  expect hidden css ".clear-completed"
   expect visible "Active One"
   expect visible "Active Two"
   expect visible "2 items left"

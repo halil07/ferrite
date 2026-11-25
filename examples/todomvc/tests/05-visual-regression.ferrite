@@ -6,11 +6,14 @@ beforeEach {
 }
 
 test "visual-baseline-empty-and-mixed-list" {
+  expect count css ".todo-list li" 0
   expect screenshot "todomvc-empty" threshold 0.1 maxDiff 0.005
 
   use add_todo("Ship Ferrite DSL")
   use add_todo("Review visual diff")
   use toggle_first_todo()
+  expect count css ".todo-list li" 2
+  expect count css ".todo-list li.completed" 1
   expect visible "1 item left"
 
   expect screenshot "todomvc-mixed-list" threshold 0.1 maxDiff 0.005

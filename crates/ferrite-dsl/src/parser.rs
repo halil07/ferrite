@@ -321,6 +321,15 @@ impl<'a> Parser<'a> {
                         timeout_ms,
                         span,
                     })
+                } else if self.eat_ident("css") || self.eat_ident("selector") {
+                    let (selector, _) = self.expect_string()?;
+                    let (_, nth, timeout_ms) = self.parse_match_modifiers(5_000, true)?;
+                    Ok(Stmt::ClickCss {
+                        selector,
+                        nth,
+                        timeout_ms,
+                        span,
+                    })
                 } else {
                     let ref_id = self.expect_ref()?;
                     Ok(Stmt::ClickRef { ref_id, span })
@@ -345,6 +354,17 @@ impl<'a> Parser<'a> {
                         timeout_ms,
                         span,
                     })
+                } else if self.eat_ident("css") || self.eat_ident("selector") {
+                    let (selector, _) = self.expect_string()?;
+                    let (text, _) = self.expect_string()?;
+                    let (_, nth, timeout_ms) = self.parse_match_modifiers(5_000, true)?;
+                    Ok(Stmt::FillCss {
+                        selector,
+                        text,
+                        nth,
+                        timeout_ms,
+                        span,
+                    })
                 } else {
                     let ref_id = self.expect_ref()?;
                     let (text, _) = self.expect_string()?;
@@ -362,6 +382,15 @@ impl<'a> Parser<'a> {
                         timeout_ms,
                         span,
                     })
+                } else if self.eat_ident("css") || self.eat_ident("selector") {
+                    let (selector, _) = self.expect_string()?;
+                    let (_, nth, timeout_ms) = self.parse_match_modifiers(5_000, true)?;
+                    Ok(Stmt::DblclickCss {
+                        selector,
+                        nth,
+                        timeout_ms,
+                        span,
+                    })
                 } else {
                     let ref_id = self.expect_ref()?;
                     Ok(Stmt::DblclickRef { ref_id, span })
@@ -374,6 +403,15 @@ impl<'a> Parser<'a> {
                     Ok(Stmt::HoverText {
                         text,
                         exact,
+                        nth,
+                        timeout_ms,
+                        span,
+                    })
+                } else if self.eat_ident("css") || self.eat_ident("selector") {
+                    let (selector, _) = self.expect_string()?;
+                    let (_, nth, timeout_ms) = self.parse_match_modifiers(5_000, true)?;
+                    Ok(Stmt::HoverCss {
+                        selector,
                         nth,
                         timeout_ms,
                         span,
@@ -410,21 +448,60 @@ impl<'a> Parser<'a> {
                 let (kind, k_span) = self.expect_ident()?;
                 match kind.as_str() {
                     "visible" => {
-                        let (text, _) = self.expect_string()?;
-                        let (exact, _, timeout_ms) = self.parse_match_modifiers(5_000, false)?;
-                        Ok(Stmt::ExpectVisible {
-                            text,
-                            exact,
-                            timeout_ms,
-                            span,
-                        })
+                        if self.eat_ident("css") || self.eat_ident("selector") {
+                            let (selector, _) = self.expect_string()?;
+                            let (_, nth, timeout_ms) = self.parse_match_modifiers(5_000, true)?;
+                            Ok(Stmt::ExpectCssVisible {
+                                selector,
+                                nth,
+                                timeout_ms,
+                                span,
+                            })
+                        } else {
+                            let (text, _) = self.expect_string()?;
+                            let (exact, _, timeout_ms) = self.parse_match_modifiers(5_000, false)?;
+                            Ok(Stmt::ExpectVisible {
+                                text,
+                                exact,
+                                timeout_ms,
+                                span,
+                            })
+                        }
                     }
                     "hidden" => {
-                        let (text, _) = self.expect_string()?;
-                        let (exact, _, timeout_ms) = self.parse_match_modifiers(5_000, false)?;
-                        Ok(Stmt::ExpectHidden {
-                            text,
-                            exact,
+                        if self.eat_ident("css") || self.eat_ident("selector") {
+                            let (selector, _) = self.expect_string()?;
+                            let (_, nth, timeout_ms) = self.parse_match_modifiers(5_000, true)?;
+                            Ok(Stmt::ExpectCssHidden {
+                                selector,
+                                nth,
+                                timeout_ms,
+                                span,
+                            })
+                        } else {
+                            let (text, _) = self.expect_string()?;
+                            let (exact, _, timeout_ms) = self.parse_match_modifiers(5_000, false)?;
+                            Ok(Stmt::ExpectHidden {
+                                text,
+                                exact,
+                                timeout_ms,
+                                span,
+                            })
+                        }
+                    }
+                    "count" => {
+                        if !self.eat_ident("css") && !self.eat_ident("selector") {
+                            return Err(self.err(
+                                self.peek_span(),
+                                "expected `css` after `expect count` (e.g. `expect count css \".item\" 3`)",
+                            ));
+                        }
+                        let (selector, _) = self.expect_string()?;
+                        let (expected_u64, _) = self.expect_u64_int()?;
+                        let (_, _, timeout_ms) = self.parse_match_modifiers(5_000, false)?;
+                        Ok(Stmt::ExpectCssCount {
+                            selector,
+                            expected: expected_u64 as usize,
                             timeout_ms,
                             span,
                         })

@@ -449,6 +449,196 @@ impl E2eSession {
         }
     }
 
+    pub async fn click_css(
+        &self,
+        tab_id: i64,
+        selector: &str,
+        nth: usize,
+        timeout_ms: u64,
+    ) -> anyhow::Result<Value> {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms.max(1));
+        loop {
+            match self.locator.click_css(tab_id, selector, nth).await {
+                Ok((x, y)) => {
+                    return Ok(json!({
+                        "tabId": tab_id,
+                        "selector": selector,
+                        "nth": nth,
+                        "x": x,
+                        "y": y,
+                    }));
+                }
+                Err(err) if Instant::now() < deadline => {
+                    tracing::debug!(?err, selector, "click_css retrying");
+                }
+                Err(err) => return Err(err.into()),
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    pub async fn dblclick_css(
+        &self,
+        tab_id: i64,
+        selector: &str,
+        nth: usize,
+        timeout_ms: u64,
+    ) -> anyhow::Result<Value> {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms.max(1));
+        loop {
+            match self.locator.dblclick_css(tab_id, selector, nth).await {
+                Ok((x, y)) => {
+                    return Ok(json!({
+                        "tabId": tab_id,
+                        "selector": selector,
+                        "nth": nth,
+                        "x": x,
+                        "y": y,
+                    }));
+                }
+                Err(err) if Instant::now() < deadline => {
+                    tracing::debug!(?err, selector, "dblclick_css retrying");
+                }
+                Err(err) => return Err(err.into()),
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    pub async fn hover_css(
+        &self,
+        tab_id: i64,
+        selector: &str,
+        nth: usize,
+        timeout_ms: u64,
+    ) -> anyhow::Result<Value> {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms.max(1));
+        loop {
+            match self.locator.hover_css(tab_id, selector, nth).await {
+                Ok((x, y)) => {
+                    return Ok(json!({
+                        "tabId": tab_id,
+                        "selector": selector,
+                        "nth": nth,
+                        "x": x,
+                        "y": y,
+                    }));
+                }
+                Err(err) if Instant::now() < deadline => {
+                    tracing::debug!(?err, selector, "hover_css retrying");
+                }
+                Err(err) => return Err(err.into()),
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    pub async fn fill_css(
+        &self,
+        tab_id: i64,
+        selector: &str,
+        text: &str,
+        nth: usize,
+        timeout_ms: u64,
+    ) -> anyhow::Result<Value> {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms.max(1));
+        loop {
+            match self.locator.fill_css(tab_id, selector, text, nth).await {
+                Ok(()) => {
+                    return Ok(json!({
+                        "tabId": tab_id,
+                        "selector": selector,
+                        "nth": nth,
+                        "filled": true,
+                    }));
+                }
+                Err(err) if Instant::now() < deadline => {
+                    tracing::debug!(?err, selector, "fill_css retrying");
+                }
+                Err(err) => return Err(err.into()),
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    pub async fn assert_css_visible(
+        &self,
+        tab_id: i64,
+        selector: &str,
+        nth: usize,
+        timeout_ms: u64,
+    ) -> anyhow::Result<Value> {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms.max(1));
+        loop {
+            if self.locator.is_css_visible(tab_id, selector, nth).await? {
+                return Ok(json!({
+                    "tabId": tab_id,
+                    "selector": selector,
+                    "nth": nth,
+                    "visible": true,
+                }));
+            }
+            if Instant::now() >= deadline {
+                anyhow::bail!(
+                    "assertion failed: CSS selector {selector:?} (nth={nth}) not visible within {timeout_ms}ms"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    pub async fn assert_css_hidden(
+        &self,
+        tab_id: i64,
+        selector: &str,
+        nth: usize,
+        timeout_ms: u64,
+    ) -> anyhow::Result<Value> {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms.max(1));
+        loop {
+            if !self.locator.is_css_visible(tab_id, selector, nth).await? {
+                return Ok(json!({
+                    "tabId": tab_id,
+                    "selector": selector,
+                    "nth": nth,
+                    "hidden": true,
+                }));
+            }
+            if Instant::now() >= deadline {
+                anyhow::bail!(
+                    "assertion failed: CSS selector {selector:?} (nth={nth}) is still visible after {timeout_ms}ms"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    pub async fn assert_css_count(
+        &self,
+        tab_id: i64,
+        selector: &str,
+        expected: usize,
+        timeout_ms: u64,
+    ) -> anyhow::Result<Value> {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms.max(1));
+        loop {
+            let actual = self.locator.query_selector_all(tab_id, selector).await?.len();
+            if actual == expected {
+                return Ok(json!({
+                    "tabId": tab_id,
+                    "selector": selector,
+                    "count": actual,
+                }));
+            }
+            if Instant::now() >= deadline {
+                anyhow::bail!(
+                    "assertion failed: CSS selector {selector:?} matched {actual} element(s), expected {expected} within {timeout_ms}ms"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     pub async fn intercept_network(
         &self,
         tab_id: i64,
@@ -1069,6 +1259,108 @@ impl E2eSession {
                     .and_then(Value::as_u64)
                     .unwrap_or(5_000);
                 self.assert_hidden(tab_id, text, exact, timeout_ms).await
+            }
+            "click_css" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                let selector = params
+                    .get("selector")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("missing `selector`"))?;
+                let nth = params.get("nth").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let timeout_ms = params
+                    .get("timeoutMs")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(5_000);
+                self.click_css(tab_id, selector, nth, timeout_ms).await
+            }
+            "dblclick_css" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                let selector = params
+                    .get("selector")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("missing `selector`"))?;
+                let nth = params.get("nth").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let timeout_ms = params
+                    .get("timeoutMs")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(5_000);
+                self.dblclick_css(tab_id, selector, nth, timeout_ms).await
+            }
+            "hover_css" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                let selector = params
+                    .get("selector")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("missing `selector`"))?;
+                let nth = params.get("nth").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let timeout_ms = params
+                    .get("timeoutMs")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(5_000);
+                self.hover_css(tab_id, selector, nth, timeout_ms).await
+            }
+            "fill_css" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                let selector = params
+                    .get("selector")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("missing `selector`"))?;
+                let text = params
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("missing `text`"))?;
+                let nth = params.get("nth").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let timeout_ms = params
+                    .get("timeoutMs")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(5_000);
+                self.fill_css(tab_id, selector, text, nth, timeout_ms).await
+            }
+            "assert_css_visible" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                let selector = params
+                    .get("selector")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("missing `selector`"))?;
+                let nth = params.get("nth").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let timeout_ms = params
+                    .get("timeoutMs")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(5_000);
+                self.assert_css_visible(tab_id, selector, nth, timeout_ms)
+                    .await
+            }
+            "assert_css_hidden" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                let selector = params
+                    .get("selector")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("missing `selector`"))?;
+                let nth = params.get("nth").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let timeout_ms = params
+                    .get("timeoutMs")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(5_000);
+                self.assert_css_hidden(tab_id, selector, nth, timeout_ms)
+                    .await
+            }
+            "assert_css_count" => {
+                let tab_id = self.resolve_tab(req_tab).await?;
+                let selector = params
+                    .get("selector")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("missing `selector`"))?;
+                let expected = params
+                    .get("expected")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| anyhow::anyhow!("missing `expected`"))?
+                    as usize;
+                let timeout_ms = params
+                    .get("timeoutMs")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(5_000);
+                self.assert_css_count(tab_id, selector, expected, timeout_ms)
+                    .await
             }
             "intercept_network" => {
                 let tab_id = self.resolve_tab(req_tab).await?;

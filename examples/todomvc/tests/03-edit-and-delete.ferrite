@@ -7,33 +7,40 @@ beforeEach {
 
 test "edit-todo-on-double-click-and-enter" {
   use add_todo("Write unit tests")
+  expect count css ".todo-list li" 1
   expect visible "Write unit tests"
 
-  use edit_todo("Write unit tests", "Write E2E tests")
+  use edit_first_todo("Write E2E tests")
+  expect count css ".todo-list li" 1
   expect visible "Write E2E tests"
   expect hidden "Write unit tests"
   expect visible "1 item left"
 }
 
-test "cancel-edit-with-escape-preserves-original" {
+test "commit-edit-on-blur-saves-updated-title" {
   use add_todo("Keep original title")
-  use cancel_edit_todo("Keep original title", "Discarded draft")
+  use edit_first_todo_on_blur("Saved on blur")
 
-  expect visible "Keep original title"
-  expect hidden "Discarded draft"
+  expect count css ".todo-list li" 1
+  expect hidden css ".todo-list li.editing"
+  expect visible "Saved on blur"
+  expect hidden "Keep original title"
 }
 
 test "delete-todo-via-hover-destroy-button" {
   use add_todo("First task")
   use add_todo("Second task")
+  expect count css ".todo-list li" 2
   expect visible "2 items left"
 
-  use delete_todo("First task")
+  use delete_first_todo()
+  expect count css ".todo-list li" 1
   expect hidden "First task"
   expect visible "Second task"
   expect visible "1 item left"
 
-  use delete_todo("Second task")
+  use delete_first_todo()
+  expect count css ".todo-list li" 0
   expect hidden "Second task"
-  expect hidden "item left"
+  expect hidden css ".footer"
 }

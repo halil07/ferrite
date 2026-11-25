@@ -387,6 +387,92 @@ fn expand_stmts(
                     timeout_ms: *timeout_ms,
                 });
             }
+            Stmt::ClickCss {
+                selector,
+                nth,
+                timeout_ms,
+                span,
+            } => {
+                out_steps.push(TestStep::ClickCss {
+                    selector: interpolate(selector, scope, file, *span)?,
+                    nth: *nth,
+                    timeout_ms: *timeout_ms,
+                });
+            }
+            Stmt::FillCss {
+                selector,
+                text,
+                nth,
+                timeout_ms,
+                span,
+            } => {
+                out_steps.push(TestStep::FillCss {
+                    selector: interpolate(selector, scope, file, *span)?,
+                    text: interpolate(text, scope, file, *span)?,
+                    nth: *nth,
+                    timeout_ms: *timeout_ms,
+                });
+            }
+            Stmt::DblclickCss {
+                selector,
+                nth,
+                timeout_ms,
+                span,
+            } => {
+                out_steps.push(TestStep::DblclickCss {
+                    selector: interpolate(selector, scope, file, *span)?,
+                    nth: *nth,
+                    timeout_ms: *timeout_ms,
+                });
+            }
+            Stmt::HoverCss {
+                selector,
+                nth,
+                timeout_ms,
+                span,
+            } => {
+                out_steps.push(TestStep::HoverCss {
+                    selector: interpolate(selector, scope, file, *span)?,
+                    nth: *nth,
+                    timeout_ms: *timeout_ms,
+                });
+            }
+            Stmt::ExpectCssVisible {
+                selector,
+                nth,
+                timeout_ms,
+                span,
+            } => {
+                out_steps.push(TestStep::AssertCssVisible {
+                    selector: interpolate(selector, scope, file, *span)?,
+                    nth: *nth,
+                    timeout_ms: *timeout_ms,
+                });
+            }
+            Stmt::ExpectCssHidden {
+                selector,
+                nth,
+                timeout_ms,
+                span,
+            } => {
+                out_steps.push(TestStep::AssertCssHidden {
+                    selector: interpolate(selector, scope, file, *span)?,
+                    nth: *nth,
+                    timeout_ms: *timeout_ms,
+                });
+            }
+            Stmt::ExpectCssCount {
+                selector,
+                expected,
+                timeout_ms,
+                span,
+            } => {
+                out_steps.push(TestStep::AssertCssCount {
+                    selector: interpolate(selector, scope, file, *span)?,
+                    expected: *expected,
+                    timeout_ms: *timeout_ms,
+                });
+            }
             Stmt::ConsoleStart { .. } => {
                 out_steps.push(TestStep::ConsoleStart);
             }
@@ -909,6 +995,55 @@ mod tests {
         assert!(matches!(&steps[2], TestStep::MockClear));
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn compiles_css_selector_actions_and_assertions() {
+        let src = r##"
+            suite "css-selectors"
+            test "uses-id-and-class-selectors" {
+                fill css "input.new-todo" "Buy milk" timeout 4s
+                click css "#submit-btn" nth 0 timeout 3s
+                dblclick css ".todo-list li label" nth 1
+                hover css ".todo-list li" nth 0
+                expect visible css ".todo-list li" timeout 3s
+                expect hidden css ".loading-spinner" timeout 2s
+                expect count css ".todo-list li" 2 timeout 4s
+            }
+        "##;
+        let suite = compile_source("css.ferrite", Path::new("."), src).unwrap();
+        let steps = &suite.cases[0].steps;
+        assert_eq!(steps.len(), 7);
+        assert!(matches!(
+            &steps[0],
+            TestStep::FillCss { selector, text, timeout_ms: 4_000, .. }
+                if selector == "input.new-todo" && text == "Buy milk"
+        ));
+        assert!(matches!(
+            &steps[1],
+            TestStep::ClickCss { selector, nth: 0, .. } if selector == "#submit-btn"
+        ));
+        assert!(matches!(
+            &steps[2],
+            TestStep::DblclickCss { selector, nth: 1, .. } if selector == ".todo-list li label"
+        ));
+        assert!(matches!(
+            &steps[3],
+            TestStep::HoverCss { selector, nth: 0, .. } if selector == ".todo-list li"
+        ));
+        assert!(matches!(
+            &steps[4],
+            TestStep::AssertCssVisible { selector, .. } if selector == ".todo-list li"
+        ));
+        assert!(matches!(
+            &steps[5],
+            TestStep::AssertCssHidden { selector, .. } if selector == ".loading-spinner"
+        ));
+        assert!(matches!(
+            &steps[6],
+            TestStep::AssertCssCount { selector, expected: 2, timeout_ms: 4_000 }
+                if selector == ".todo-list li"
+        ));
     }
 
     trait SuiteExt {

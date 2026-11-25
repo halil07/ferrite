@@ -339,6 +339,212 @@ impl LocatorEngine {
 
         Ok(())
     }
+
+    /// Queries all DOM nodes matching a CSS selector (`DOM.querySelectorAll`, equivalent to `document.querySelectorAll`).
+    pub async fn query_selector_all(
+        &self,
+        tab_id: i64,
+        selector: &str,
+    ) -> Result<Vec<i64>, CdpError> {
+        let _ = self
+            .transport
+            .send_cdp(tab_id, "DOM.enable", json!({}), None)
+            .await;
+
+        let doc = self
+            .transport
+            .send_cdp(tab_id, "DOM.getDocument", json!({ "depth": 0 }), None)
+            .await?;
+        let root_node_id = doc
+            .get("root")
+            .and_then(|r| r.get("nodeId"))
+            .and_then(Value::as_i64)
+            .ok_or_else(|| CdpError::Protocol {
+                code: None,
+                message: "DOM.getDocument omitted root.nodeId".to_string(),
+            })?;
+
+        let res = self
+            .transport
+            .send_cdp(
+                tab_id,
+                "DOM.querySelectorAll",
+                json!({ "nodeId": root_node_id, "selector": selector }),
+                None,
+            )
+            .await?;
+
+        let ids = res
+            .get("nodeIds")
+            .and_then(Value::as_array)
+            .map(|arr| arr.iter().filter_map(Value::as_i64).collect())
+            .unwrap_or_default();
+        Ok(ids)
+    }
+
+    async fn fetch_node_box_center(&self, tab_id: i64, node_id: i64) -> Result<(f64, f64), CdpError> {
+        self.transport
+            .send_cdp(
+                tab_id,
+                "DOM.scrollIntoViewIfNeeded",
+                json!({ "nodeId": node_id }),
+                None,
+            )
+            .await?;
+
+        match self
+            .transport
+            .send_cdp(tab_id, "DOM.getBoxModel", json!({ "nodeId": node_id }), None)
+            .await
+        {
+            Ok(box_res) => parse_box_model_center(&box_res),
+            Err(CdpError::Protocol { .. }) => {
+                let quads_res = self
+                    .transport
+                    .send_cdp(
+                        tab_id,
+                        "DOM.getContentQuads",
+                        json!({ "nodeId": node_id }),
+                        None,
+                    )
+                    .await?;
+                parse_content_quads_center(&quads_res)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn resolve_css_node(&self, tab_id: i64, selector: &str, nth: usize) -> Result<i64, CdpError> {
+        let ids = self.query_selector_all(tab_id, selector).await?;
+        ids.into_iter().nth(nth).ok_or_else(|| {
+            CdpError::InvalidArgument(format!(
+                "no DOM element matched CSS selector {selector:?} at index {nth}"
+            ))
+        })
+    }
+
+    pub async fn is_css_visible(
+        &self,
+        tab_id: i64,
+        selector: &str,
+        nth: usize,
+    ) -> Result<bool, CdpError> {
+        let ids = self.query_selector_all(tab_id, selector).await?;
+        let Some(node_id) = ids.into_iter().nth(nth) else {
+            return Ok(false);
+        };
+        match self.fetch_node_box_center(tab_id, node_id).await {
+            Ok(_) => Ok(true),
+            Err(CdpError::InvalidArgument(_) | CdpError::Protocol { .. } | CdpError::StaleNode) => {
+                Ok(false)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    pub async fn click_css(
+        &self,
+        tab_id: i64,
+        selector: &str,
+        nth: usize,
+    ) -> Result<(f64, f64), CdpError> {
+        let node_id = self.resolve_css_node(tab_id, selector, nth).await?;
+        let (x, y) = self.fetch_node_box_center(tab_id, node_id).await?;
+        self.dispatch_mouse_sequence(
+            tab_id,
+            x,
+            y,
+            &[("mouseMoved", 0), ("mousePressed", 1), ("mouseReleased", 1)],
+        )
+        .await?;
+        Ok((x, y))
+    }
+
+    pub async fn dblclick_css(
+        &self,
+        tab_id: i64,
+        selector: &str,
+        nth: usize,
+    ) -> Result<(f64, f64), CdpError> {
+        let node_id = self.resolve_css_node(tab_id, selector, nth).await?;
+        let (x, y) = self.fetch_node_box_center(tab_id, node_id).await?;
+        self.dispatch_mouse_sequence(
+            tab_id,
+            x,
+            y,
+            &[
+                ("mouseMoved", 0),
+                ("mousePressed", 1),
+                ("mouseReleased", 1),
+                ("mousePressed", 2),
+                ("mouseReleased", 2),
+            ],
+        )
+        .await?;
+        Ok((x, y))
+    }
+
+    pub async fn hover_css(
+        &self,
+        tab_id: i64,
+        selector: &str,
+        nth: usize,
+    ) -> Result<(f64, f64), CdpError> {
+        let node_id = self.resolve_css_node(tab_id, selector, nth).await?;
+        let (x, y) = self.fetch_node_box_center(tab_id, node_id).await?;
+        self.dispatch_mouse_sequence(tab_id, x, y, &[("mouseMoved", 0)])
+            .await?;
+        Ok((x, y))
+    }
+
+    pub async fn fill_css(
+        &self,
+        tab_id: i64,
+        selector: &str,
+        text: &str,
+        nth: usize,
+    ) -> Result<(), CdpError> {
+        let node_id = self.resolve_css_node(tab_id, selector, nth).await?;
+        self.transport
+            .send_cdp(tab_id, "DOM.focus", json!({ "nodeId": node_id }), None)
+            .await?;
+
+        for key_type in ["keyDown", "keyUp"] {
+            let mut key_params = json!({
+                "type": key_type,
+                "key": "a",
+                "code": "KeyA",
+                "modifiers": 2,
+                "windowsVirtualKeyCode": 65
+            });
+            if key_type == "keyDown" {
+                key_params["commands"] = json!(["selectAll"]);
+            }
+            self.transport
+                .send_cdp(tab_id, "Input.dispatchKeyEvent", key_params, None)
+                .await?;
+        }
+        for key_type in ["keyDown", "keyUp"] {
+            self.transport
+                .send_cdp(
+                    tab_id,
+                    "Input.dispatchKeyEvent",
+                    json!({
+                        "type": key_type,
+                        "key": "Backspace",
+                        "code": "Backspace",
+                        "windowsVirtualKeyCode": 8
+                    }),
+                    None,
+                )
+                .await?;
+        }
+
+        self.transport
+            .send_cdp(tab_id, "Input.insertText", json!({ "text": text }), None)
+            .await?;
+        Ok(())
+    }
 }
 
 fn resolve_key_spec(
@@ -583,6 +789,40 @@ mod tests {
         }));
         assert!(calls.iter().any(|c| {
             c.method == "Input.insertText" && c.params["text"] == "Updated"
+        }));
+    }
+
+    #[tokio::test]
+    async fn supports_css_query_selector_all_click_and_fill() {
+        let mock = MockCdpTransport::new();
+        let engine = LocatorEngine::new(mock.clone());
+
+        mock.add_handler(|_tab_id, method, _params, _session| match method {
+            "DOM.getDocument" => Some(Ok(json!({ "root": { "nodeId": 1 } }))),
+            "DOM.querySelectorAll" => Some(Ok(json!({ "nodeIds": [41, 42] }))),
+            "DOM.getBoxModel" => Some(Ok(json!({
+                "model": { "content": [0.0, 0.0, 80.0, 0.0, 80.0, 30.0, 0.0, 30.0] }
+            }))),
+            _ => None,
+        });
+
+        let (x, y) = engine.click_css(1, ".todo-list li .toggle", 1).await.unwrap();
+        assert_eq!((x, y), (40.0, 15.0));
+
+        engine.fill_css(1, "#new-todo", "Buy bread", 0).await.unwrap();
+
+        let calls = mock.recorded_calls();
+        assert!(calls.iter().any(|c| {
+            c.method == "DOM.querySelectorAll" && c.params["selector"] == ".todo-list li .toggle"
+        }));
+        assert!(calls.iter().any(|c| {
+            c.method == "DOM.getBoxModel" && c.params["nodeId"] == 42
+        }));
+        assert!(calls.iter().any(|c| {
+            c.method == "DOM.focus" && c.params["nodeId"] == 41
+        }));
+        assert!(calls.iter().any(|c| {
+            c.method == "Input.insertText" && c.params["text"] == "Buy bread"
         }));
     }
 }

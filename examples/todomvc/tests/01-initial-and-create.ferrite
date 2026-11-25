@@ -8,31 +8,37 @@ beforeEach {
 }
 
 test "initial-empty-state" {
-  expect visible "todos"
-  expect hidden "item left"
-  expect hidden "Clear completed"
+  expect visible css "header.header h1"
+  expect visible css "input.new-todo"
+  expect count css ".todo-list li" 0
+  expect hidden css ".footer"
   expect noConsoleErrors
 }
 
 test "create-single-and-multiple-todos" {
   use add_todo("Buy milk")
+  expect count css ".todo-list li" 1
+  expect visible css ".footer"
   expect visible "Buy milk"
   expect visible "1 item left"
 
   use add_todo("Walk the dog")
   use add_todo("Read Rust book")
+  expect count css ".todo-list li" 3
   expect visible "Walk the dog"
   expect visible "Read Rust book"
   expect visible "3 items left"
   expect noConsoleErrors
 }
 
-test "trim-whitespace-and-ignore-too-short-inputs" {
-  // Single-character or empty inputs are ignored by React TodoMVC (min length >= 2)
-  use add_todo("a")
-  expect hidden "1 item left"
+test "trim-whitespace-and-ignore-empty-inputs" {
+  // Whitespace-only inputs are ignored by React TodoMVC
+  use add_todo("   ")
+  expect count css ".todo-list li" 0
+  expect hidden css ".footer"
 
   use add_todo("   Learn Ferrite   ")
+  expect count css ".todo-list li" 1
   expect visible "Learn Ferrite" exact
   expect visible "1 item left"
 }

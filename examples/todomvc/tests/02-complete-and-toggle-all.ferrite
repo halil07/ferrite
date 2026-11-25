@@ -8,30 +8,36 @@ beforeEach {
 test "toggle-single-todo-complete-and-back" {
   use add_todo("Task One")
   use add_todo("Task Two")
+  expect count css ".todo-list li" 2
+  expect count css ".todo-list li.completed" 0
   expect visible "2 items left"
 
-  // nth 0 is Toggle All, nth 1 is the first todo item checkbox
   use toggle_first_todo()
+  expect count css ".todo-list li.completed" 1
   expect visible "1 item left"
-  expect visible "Clear completed"
+  expect visible css ".clear-completed"
 
   // Uncheck back to active
   use toggle_first_todo()
+  expect count css ".todo-list li.completed" 0
   expect visible "2 items left"
-  expect hidden "Clear completed"
+  expect hidden css ".clear-completed"
 }
 
 test "toggle-all-complete-and-uncomplete" {
   use add_todo("Alpha")
   use add_todo("Beta")
   use add_todo("Gamma")
+  expect count css ".todo-list li" 3
   expect visible "3 items left"
 
   use toggle_all()
+  expect count css ".todo-list li.completed" 3
   expect visible "0 items left"
-  expect visible "Clear completed"
+  expect visible css ".clear-completed"
 
   use toggle_all()
+  expect count css ".todo-list li.completed" 0
   expect visible "3 items left"
-  expect hidden "Clear completed"
+  expect hidden css ".clear-completed"
 }

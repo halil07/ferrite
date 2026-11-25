@@ -125,6 +125,55 @@ pub enum TestStep {
         #[serde(default = "default_action_timeout_ms")]
         timeout_ms: u64,
     },
+    ClickCss {
+        selector: String,
+        #[serde(default)]
+        nth: usize,
+        #[serde(default = "default_action_timeout_ms")]
+        timeout_ms: u64,
+    },
+    FillCss {
+        selector: String,
+        text: String,
+        #[serde(default)]
+        nth: usize,
+        #[serde(default = "default_action_timeout_ms")]
+        timeout_ms: u64,
+    },
+    DblclickCss {
+        selector: String,
+        #[serde(default)]
+        nth: usize,
+        #[serde(default = "default_action_timeout_ms")]
+        timeout_ms: u64,
+    },
+    HoverCss {
+        selector: String,
+        #[serde(default)]
+        nth: usize,
+        #[serde(default = "default_action_timeout_ms")]
+        timeout_ms: u64,
+    },
+    AssertCssVisible {
+        selector: String,
+        #[serde(default)]
+        nth: usize,
+        #[serde(default = "default_action_timeout_ms")]
+        timeout_ms: u64,
+    },
+    AssertCssHidden {
+        selector: String,
+        #[serde(default)]
+        nth: usize,
+        #[serde(default = "default_action_timeout_ms")]
+        timeout_ms: u64,
+    },
+    AssertCssCount {
+        selector: String,
+        expected: usize,
+        #[serde(default = "default_action_timeout_ms")]
+        timeout_ms: u64,
+    },
     ConsoleStart,
     ConsoleClear,
     AssertNoConsoleErrors,
@@ -348,6 +397,63 @@ fn step_to_rpc(
         } => (
             "assert_hidden".to_string(),
             json!({ "tabId": tab_id, "text": text, "exact": exact, "timeoutMs": timeout_ms }),
+        ),
+        TestStep::ClickCss {
+            selector,
+            nth,
+            timeout_ms,
+        } => (
+            "click_css".to_string(),
+            json!({ "tabId": tab_id, "selector": selector, "nth": nth, "timeoutMs": timeout_ms }),
+        ),
+        TestStep::FillCss {
+            selector,
+            text,
+            nth,
+            timeout_ms,
+        } => (
+            "fill_css".to_string(),
+            json!({ "tabId": tab_id, "selector": selector, "text": text, "nth": nth, "timeoutMs": timeout_ms }),
+        ),
+        TestStep::DblclickCss {
+            selector,
+            nth,
+            timeout_ms,
+        } => (
+            "dblclick_css".to_string(),
+            json!({ "tabId": tab_id, "selector": selector, "nth": nth, "timeoutMs": timeout_ms }),
+        ),
+        TestStep::HoverCss {
+            selector,
+            nth,
+            timeout_ms,
+        } => (
+            "hover_css".to_string(),
+            json!({ "tabId": tab_id, "selector": selector, "nth": nth, "timeoutMs": timeout_ms }),
+        ),
+        TestStep::AssertCssVisible {
+            selector,
+            nth,
+            timeout_ms,
+        } => (
+            "assert_css_visible".to_string(),
+            json!({ "tabId": tab_id, "selector": selector, "nth": nth, "timeoutMs": timeout_ms }),
+        ),
+        TestStep::AssertCssHidden {
+            selector,
+            nth,
+            timeout_ms,
+        } => (
+            "assert_css_hidden".to_string(),
+            json!({ "tabId": tab_id, "selector": selector, "nth": nth, "timeoutMs": timeout_ms }),
+        ),
+        TestStep::AssertCssCount {
+            selector,
+            expected,
+            timeout_ms,
+        } => (
+            "assert_css_count".to_string(),
+            json!({ "tabId": tab_id, "selector": selector, "expected": expected, "timeoutMs": timeout_ms }),
         ),
         TestStep::ConsoleStart => ("console.start".to_string(), json!({ "tabId": tab_id })),
         TestStep::ConsoleClear => ("console.clear".to_string(), json!({ "tabId": tab_id })),
