@@ -137,6 +137,8 @@ pub enum TestStep {
     },
     MockRoute {
         url_substring: String,
+        #[serde(default)]
+        method: Option<String>,
         status: u16,
         #[serde(default)]
         headers: HashMap<String, String>,
@@ -145,6 +147,7 @@ pub enum TestStep {
         #[serde(default)]
         patterns: Vec<String>,
     },
+    MockClear,
     AssertScreenshot {
         name: String,
         #[serde(default)]
@@ -367,6 +370,7 @@ fn step_to_rpc(
         ),
         TestStep::MockRoute {
             url_substring,
+            method,
             status,
             headers,
             body,
@@ -377,6 +381,7 @@ fn step_to_rpc(
                 "tabId": tab_id,
                 "route": MockRouteResponse {
                     url_substring: url_substring.clone(),
+                    method: method.clone(),
                     status: *status,
                     headers: headers.clone(),
                     body: body.clone(),
@@ -385,6 +390,7 @@ fn step_to_rpc(
                 "patterns": patterns,
             }),
         ),
+        TestStep::MockClear => ("mock.clear".to_string(), json!({ "tabId": tab_id })),
         TestStep::AssertScreenshot {
             name,
             max_diff_ratio,

@@ -43,6 +43,7 @@ pub enum MockBodyAst {
 #[derive(Debug, Clone)]
 pub struct MockStmt {
     pub url_substring: String,
+    pub method: Option<String>,
     pub status: u16,
     pub headers: HashMap<String, String>,
     pub patterns: Vec<String>,
@@ -179,4 +180,7 @@ pub enum Stmt {
         span: Span,
     },
     Mock(MockStmt),
+    MockClear {
+        span: Span,
+    },
 }

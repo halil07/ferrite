@@ -356,6 +356,8 @@ impl NetworkMonitor {
 #[serde(rename_all = "camelCase")]
 pub struct MockRouteResponse {
     pub url_substring: String,
+    #[serde(default)]
+    pub method: Option<String>,
     pub status: u16,
     #[serde(default)]
     pub headers: HashMap<String, String>,
@@ -447,18 +449,31 @@ impl FetchInterceptor {
         let Some(request_id) = event.params.get("requestId").and_then(Value::as_str) else {
             return Ok(false);
         };
-        let url = event
-            .params
-            .get("request")
+        let req_obj = event.params.get("request");
+        let url = req_obj
             .and_then(|r| r.get("url"))
             .and_then(Value::as_str)
             .unwrap_or_default();
+        let req_method = req_obj
+            .and_then(|r| r.get("method"))
+            .and_then(Value::as_str)
+            .unwrap_or("GET");
 
         let matched = {
             let routes = self.routes.lock().expect("fetch routes mutex poisoned");
+            // Reverse search so a later mock overrides an earlier mock for the same endpoint.
             routes
                 .iter()
-                .find(|r| url.contains(&r.url_substring))
+                .rev()
+                .find(|r| {
+                    let method_ok = match r.method.as_deref() {
+                        Some(m) if !m.is_empty() && m != "*" && !m.eq_ignore_ascii_case("ANY") => {
+                            m.eq_ignore_ascii_case(req_method)
+                        }
+                        _ => true,
+                    };
+                    method_ok && url.contains(&r.url_substring)
+                })
                 .cloned()
         };
 
@@ -478,8 +493,28 @@ impl FetchInterceptor {
                     .await?;
             }
             Some(route) => {
-                let response_headers: Vec<Value> = route
-                    .headers
+                let mut headers = route.headers;
+                let has_acao = headers
+                    .keys()
+                    .any(|k| k.eq_ignore_ascii_case("access-control-allow-origin"));
+                if !has_acao
+                    && let Some(origin) = req_obj
+                        .and_then(|r| r.get("headers"))
+                        .and_then(Value::as_object)
+                        .and_then(|h| {
+                            h.iter()
+                                .find(|(k, _)| k.eq_ignore_ascii_case("origin"))
+                                .and_then(|(_, v)| v.as_str())
+                        })
+                {
+                    headers.insert("access-control-allow-origin".to_string(), origin.to_string());
+                    headers.insert(
+                        "access-control-allow-credentials".to_string(),
+                        "true".to_string(),
+                    );
+                }
+
+                let response_headers: Vec<Value> = headers
                     .into_iter()
                     .map(|(name, value)| json!({ "name": name, "value": value }))
                     .collect();
@@ -610,11 +645,26 @@ mod tests {
         let interceptor = FetchInterceptor::new(mock.clone(), 1);
         interceptor.add_route(MockRouteResponse {
             url_substring: "/api/profile".to_string(),
+            method: Some("GET".to_string()),
             status: 200,
             headers: HashMap::from([("content-type".to_string(), "application/json".to_string())]),
             body: r#"{"name":"Ada"}"#.to_string(),
             fail_reason: None,
         });
+
+        // A POST to /api/profile should NOT match a GET-only mock and must continue unmodified.
+        interceptor
+            .handle_paused_event(&CdpEvent {
+                tab_id: 1,
+                method: "Fetch.requestPaused".to_string(),
+                params: json!({
+                    "requestId": "pause-post",
+                    "request": { "url": "https://app.example/api/profile", "method": "POST" }
+                }),
+                session_id: None,
+            })
+            .await
+            .unwrap();
 
         let handled = interceptor
             .handle_paused_event(&CdpEvent {
@@ -622,7 +672,7 @@ mod tests {
                 method: "Fetch.requestPaused".to_string(),
                 params: json!({
                     "requestId": "pause-9",
-                    "request": { "url": "https://app.example/api/profile" }
+                    "request": { "url": "https://app.example/api/profile", "method": "GET" }
                 }),
                 session_id: None,
             })
@@ -631,10 +681,11 @@ mod tests {
         assert!(handled);
 
         let calls = mock.recorded_calls();
-        assert_eq!(calls[0].method, "Fetch.fulfillRequest");
-        assert_eq!(calls[0].params["responseCode"], 200);
+        assert_eq!(calls[0].method, "Fetch.continueRequest");
+        assert_eq!(calls[1].method, "Fetch.fulfillRequest");
+        assert_eq!(calls[1].params["responseCode"], 200);
         assert_eq!(
-            calls[0].params["body"],
+            calls[1].params["body"],
             STANDARD.encode(br#"{"name":"Ada"}"#)
         );
     }

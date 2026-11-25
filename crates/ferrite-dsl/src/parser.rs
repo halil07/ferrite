@@ -553,11 +553,37 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_mock(&mut self, span: Span) -> Result<Stmt, DslError> {
+        if self.eat_ident("clear") {
+            return Ok(Stmt::MockClear { span });
+        }
+
+        // Optional HTTP method before URL: e.g. `mock GET "real_service" "mock.json"`
+        let method = if let TokenKind::Ident(ident) = self.peek_kind() {
+            let upper = ident.to_ascii_uppercase();
+            if matches!(
+                upper.as_str(),
+                "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" | "ANY"
+            ) {
+                self.bump();
+                if upper == "ANY" { None } else { Some(upper) }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let (url_substring, _) = self.expect_string()?;
         let mut status: u16 = 200;
         let mut headers = HashMap::new();
         let mut patterns = Vec::new();
         let mut body: Option<MockBodyAst> = None;
+
+        // Shorthand fixture file path: `mock GET "real_service" "mock.json"`
+        if matches!(self.peek_kind(), TokenKind::Str(_)) {
+            let (rel_file, _) = self.expect_string()?;
+            body = Some(MockBodyAst::File(rel_file));
+        }
 
         loop {
             if self.eat_ident("status") {
@@ -620,6 +646,7 @@ impl<'a> Parser<'a> {
 
         Ok(Stmt::Mock(MockStmt {
             url_substring,
+            method,
             status,
             headers,
             patterns,

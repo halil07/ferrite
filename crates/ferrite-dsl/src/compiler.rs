@@ -522,6 +522,13 @@ fn expand_stmts(
                     Some(MockBodyAst::File(rel_raw)) => {
                         let rel = interpolate(rel_raw, scope, file, mock.span)?;
                         let target = source_dir.join(&rel);
+                        if !headers
+                            .keys()
+                            .any(|k| k.eq_ignore_ascii_case("content-type"))
+                            && let Some(ct) = infer_content_type(&target)
+                        {
+                            headers.insert("content-type".to_string(), ct.to_string());
+                        }
                         fs::read_to_string(&target).map_err(|source| DslError::Io {
                             path: target,
                             source,
@@ -532,15 +539,32 @@ fn expand_stmts(
 
                 out_steps.push(TestStep::MockRoute {
                     url_substring: interpolate(&mock.url_substring, scope, file, mock.span)?,
+                    method: mock.method.clone(),
                     status: mock.status,
                     headers,
                     body,
                     patterns,
                 });
             }
+            Stmt::MockClear { .. } => {
+                out_steps.push(TestStep::MockClear);
+            }
         }
     }
     Ok(())
+}
+
+fn infer_content_type(path: &Path) -> Option<&'static str> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "json" => Some("application/json; charset=utf-8"),
+        "html" | "htm" => Some("text/html; charset=utf-8"),
+        "xml" => Some("application/xml; charset=utf-8"),
+        "txt" => Some("text/plain; charset=utf-8"),
+        "js" | "mjs" => Some("application/javascript; charset=utf-8"),
+        "css" => Some("text/css; charset=utf-8"),
+        _ => None,
+    }
 }
 
 fn interpolate_json(
@@ -834,6 +858,57 @@ mod tests {
                 "expected error containing {expected_substr:?}, got: {err}"
             );
         }
+    }
+
+    #[test]
+    fn compiles_shorthand_mock_with_method_file_and_clear() {
+        let dir = std::env::temp_dir().join(format!("ferrite-dsl-mock-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("mock.json"), r#"{"ok":true,"source":"mock"}"#).unwrap();
+
+        let src = r#"
+            suite "api-mock"
+            test "intercepts-real-service" {
+                mock GET "real_service" "mock.json"
+                mock POST "/api/orders" "mock.json" status 201
+                mock clear
+            }
+        "#;
+        let suite = compile_source("mock.ferrite", &dir, src).unwrap();
+        let steps = &suite.cases[0].steps;
+        assert_eq!(steps.len(), 3);
+        match &steps[0] {
+            TestStep::MockRoute {
+                url_substring,
+                method,
+                status,
+                headers,
+                body,
+                ..
+            } => {
+                assert_eq!(url_substring, "real_service");
+                assert_eq!(method.as_deref(), Some("GET"));
+                assert_eq!(*status, 200);
+                assert_eq!(
+                    headers.get("content-type").map(String::as_str),
+                    Some("application/json; charset=utf-8")
+                );
+                assert!(body.contains(r#""source":"mock""#));
+            }
+            other => panic!("expected MockRoute, got {other:?}"),
+        }
+        assert!(matches!(
+            &steps[1],
+            TestStep::MockRoute {
+                method: Some(m),
+                status: 201,
+                ..
+            } if m == "POST"
+        ));
+        assert!(matches!(&steps[2], TestStep::MockClear));
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     trait SuiteExt {

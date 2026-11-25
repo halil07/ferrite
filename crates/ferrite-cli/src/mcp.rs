@@ -580,6 +580,86 @@ impl McpServer {
                 Ok(tool_json(&res))
             }
 
+            "browser_mock" => {
+                let action = args
+                    .get("action")
+                    .and_then(Value::as_str)
+                    .unwrap_or("add");
+                if action == "clear" {
+                    let res = self
+                        .call_daemon("mock.clear", json!({ "tabId": tab_id }))
+                        .await?;
+                    return Ok(tool_json(&res));
+                }
+                if action != "add" {
+                    anyhow::bail!("invalid mock action `{action}`; expected add|clear");
+                }
+
+                let url_substring = req_str(args, "url")?;
+                let method = args
+                    .get("method")
+                    .and_then(Value::as_str)
+                    .map(|m| m.to_ascii_uppercase());
+                let status = args.get("status").and_then(Value::as_u64).unwrap_or(200) as u16;
+                if !(100..=599).contains(&status) {
+                    anyhow::bail!("mock HTTP status must be between 100 and 599, got {status}");
+                }
+
+                let mut headers: std::collections::HashMap<String, String> = args
+                    .get("headers")
+                    .cloned()
+                    .map(serde_json::from_value)
+                    .transpose()?
+                    .unwrap_or_default();
+
+                let body = if let Some(file_path) = args.get("file").and_then(Value::as_str) {
+                    let p = Path::new(file_path);
+                    if !headers
+                        .keys()
+                        .any(|k| k.eq_ignore_ascii_case("content-type"))
+                        && p.extension()
+                            .and_then(|e| e.to_str())
+                            .is_some_and(|e| e.eq_ignore_ascii_case("json"))
+                    {
+                        headers.insert(
+                            "content-type".to_string(),
+                            "application/json; charset=utf-8".to_string(),
+                        );
+                    }
+                    std::fs::read_to_string(p)?
+                } else {
+                    args.get("body")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string()
+                };
+
+                let patterns: Vec<String> = args
+                    .get("patterns")
+                    .cloned()
+                    .map(serde_json::from_value)
+                    .transpose()?
+                    .unwrap_or_default();
+
+                let res = self
+                    .call_daemon(
+                        "intercept_network",
+                        json!({
+                            "tabId": tab_id,
+                            "route": {
+                                "urlSubstring": url_substring,
+                                "method": method,
+                                "status": status,
+                                "headers": headers,
+                                "body": body,
+                            },
+                            "patterns": patterns,
+                        }),
+                    )
+                    .await?;
+                Ok(tool_json(&res))
+            }
+
             "browser_run_ferrite" => {
                 let update_baselines = args
                     .get("updateBaselines")
@@ -888,6 +968,25 @@ fn tool_definitions() -> Value {
                     "action": { "type": "string", "enum": ["start", "list"], "description": "Operation to perform (default: list)." },
                     "urlContains": { "type": "string", "description": "Filter completed requests whose URL contains this substring." },
                     "limit": { "type": "integer", "description": "Max exchanges to return (default 100)." }
+                }
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false }
+        },
+        {
+            "name": "browser_mock",
+            "description": "Intercept and mock matching HTTP/XHR/Fetch requests on an attached tab (e.g. redirect `GET real_service` to a local `mock.json` file or inline body), or clear active mocks.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "tabId": { "type": "integer" },
+                    "action": { "type": "string", "enum": ["add", "clear"], "description": "Add a mock route or clear all mocks on the tab (default: add)." },
+                    "method": { "type": "string", "description": "Optional HTTP method filter: GET, POST, PUT, PATCH, DELETE." },
+                    "url": { "type": "string", "description": "URL substring to match (e.g. `real_service` or `/api/users`)." },
+                    "file": { "type": "string", "description": "Path to a local fixture file (e.g. `mock.json`) to serve as response body." },
+                    "body": { "type": "string", "description": "Inline response body string (used when `file` is omitted)." },
+                    "status": { "type": "integer", "description": "HTTP status code (default 200)." },
+                    "headers": { "type": "object", "description": "Optional response headers map." },
+                    "patterns": { "type": "array", "items": { "type": "string" }, "description": "Optional CDP Fetch URL wildcard patterns (default `[*]`)." }
                 }
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false }
