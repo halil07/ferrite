@@ -224,11 +224,20 @@ Add to your AI client's MCP configuration:
 
 ---
 
-## Running the TodoMVC Example
+## Running the Examples
 
+### TodoMVC Example
 This repository includes a complete 5-suite / 11-case `.ferrite` project in [examples/todomvc](examples/todomvc) targeting `https://todomvc.com/examples/react/dist/`:
 
 ```bash
 npx ferrite check examples/todomvc
 npx ferrite run examples/todomvc
+```
+
+### JSONPlaceholder Studio Example (Hybrid Network Mocking)
+A 5-suite / 8-case `.ferrite` project in [examples/jsonplaceholder-studio](examples/jsonplaceholder-studio) demonstrating `mock.load` + `mock.when` across all routes of the official demo site ([halil07/ferrite-mock-example-site](https://github.com/halil07/ferrite-mock-example-site)):
+
+```bash
+npx ferrite check examples/jsonplaceholder-studio
+npx ferrite run examples/jsonplaceholder-studio
 ```

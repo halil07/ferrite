@@ -224,11 +224,20 @@ Ferrite; Claude Desktop, Cursor, Antigravity ve VS Code Copilot gibi yapay zeka 
 
 ---
 
-## TodoMVC Örneğini Çalıştırma
+## Örnek Projeleri Çalıştırma
 
+### TodoMVC Örneği
 Depo içindeki [examples/todomvc](examples/todomvc) klasöründe `https://todomvc.com/examples/react/dist/` için hazırlanmış 5 suite / 11 test case'lik örnek proje bulunur:
 
 ```bash
 npx ferrite check examples/todomvc
 npx ferrite run examples/todomvc
+```
+
+### JSONPlaceholder Studio Örneği (Hibrit Mock Sistemi)
+[examples/jsonplaceholder-studio](examples/jsonplaceholder-studio) klasöründe, resmi demo sitesinin ([halil07/ferrite-mock-example-site](https://github.com/halil07/ferrite-mock-example-site)) tüm rotalarını `mock.load` + `mock.when` ile mock'layarak test eden 5 suite / 8 test case'lik örnek proje bulunur:
+
+```bash
+npx ferrite check examples/jsonplaceholder-studio
+npx ferrite run examples/jsonplaceholder-studio
 ```

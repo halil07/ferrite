@@ -4,7 +4,7 @@ import "./helpers/studio.ferrite";
 test "sends mocked GET and POST requests from API playground" {
   await open_studio("/playground");
 
-  await $text("API Konsolu").timeout(10s).expect().visible();
+  await $text("API Console").timeout(10s).expect().visible();
 
   // Varsayilan GET /posts istegini gonder ve mock yaniti dogrula
   await $('button[type="submit"]').timeout(5s).click();

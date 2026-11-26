@@ -1,3 +1,4 @@
+# Demo app repository: https://github.com/halil07/ferrite-mock-example-site
 name = "jsonplaceholder-studio-e2e"
 test_dir = "tests"
 snapshots_dir = ".ferrite-snapshots"
