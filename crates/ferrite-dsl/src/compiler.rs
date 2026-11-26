@@ -393,9 +393,11 @@ fn expand_stmts(
                 timeout_ms,
                 span,
             } => {
+                let raw = interpolate(selector, scope, file, *span)?;
+                let (css, resolved_nth) = resolve_jquery_css(&raw, *nth, file, *span)?;
                 out_steps.push(TestStep::ClickCss {
-                    selector: interpolate(selector, scope, file, *span)?,
-                    nth: *nth,
+                    selector: css,
+                    nth: resolved_nth,
                     timeout_ms: *timeout_ms,
                 });
             }
@@ -406,10 +408,12 @@ fn expand_stmts(
                 timeout_ms,
                 span,
             } => {
+                let raw = interpolate(selector, scope, file, *span)?;
+                let (css, resolved_nth) = resolve_jquery_css(&raw, *nth, file, *span)?;
                 out_steps.push(TestStep::FillCss {
-                    selector: interpolate(selector, scope, file, *span)?,
+                    selector: css,
                     text: interpolate(text, scope, file, *span)?,
-                    nth: *nth,
+                    nth: resolved_nth,
                     timeout_ms: *timeout_ms,
                 });
             }
@@ -419,9 +423,11 @@ fn expand_stmts(
                 timeout_ms,
                 span,
             } => {
+                let raw = interpolate(selector, scope, file, *span)?;
+                let (css, resolved_nth) = resolve_jquery_css(&raw, *nth, file, *span)?;
                 out_steps.push(TestStep::DblclickCss {
-                    selector: interpolate(selector, scope, file, *span)?,
-                    nth: *nth,
+                    selector: css,
+                    nth: resolved_nth,
                     timeout_ms: *timeout_ms,
                 });
             }
@@ -431,9 +437,11 @@ fn expand_stmts(
                 timeout_ms,
                 span,
             } => {
+                let raw = interpolate(selector, scope, file, *span)?;
+                let (css, resolved_nth) = resolve_jquery_css(&raw, *nth, file, *span)?;
                 out_steps.push(TestStep::HoverCss {
-                    selector: interpolate(selector, scope, file, *span)?,
-                    nth: *nth,
+                    selector: css,
+                    nth: resolved_nth,
                     timeout_ms: *timeout_ms,
                 });
             }
@@ -443,9 +451,11 @@ fn expand_stmts(
                 timeout_ms,
                 span,
             } => {
+                let raw = interpolate(selector, scope, file, *span)?;
+                let (css, resolved_nth) = resolve_jquery_css(&raw, *nth, file, *span)?;
                 out_steps.push(TestStep::AssertCssVisible {
-                    selector: interpolate(selector, scope, file, *span)?,
-                    nth: *nth,
+                    selector: css,
+                    nth: resolved_nth,
                     timeout_ms: *timeout_ms,
                 });
             }
@@ -455,9 +465,11 @@ fn expand_stmts(
                 timeout_ms,
                 span,
             } => {
+                let raw = interpolate(selector, scope, file, *span)?;
+                let (css, resolved_nth) = resolve_jquery_css(&raw, *nth, file, *span)?;
                 out_steps.push(TestStep::AssertCssHidden {
-                    selector: interpolate(selector, scope, file, *span)?,
-                    nth: *nth,
+                    selector: css,
+                    nth: resolved_nth,
                     timeout_ms: *timeout_ms,
                 });
             }
@@ -467,8 +479,10 @@ fn expand_stmts(
                 timeout_ms,
                 span,
             } => {
+                let raw = interpolate(selector, scope, file, *span)?;
+                let (css, _) = resolve_jquery_css(&raw, 0, file, *span)?;
                 out_steps.push(TestStep::AssertCssCount {
-                    selector: interpolate(selector, scope, file, *span)?,
+                    selector: css,
                     expected: *expected,
                     timeout_ms: *timeout_ms,
                 });
@@ -640,6 +654,46 @@ fn expand_stmts(
     Ok(())
 }
 
+fn resolve_jquery_css(
+    raw: &str,
+    default_nth: usize,
+    file: &str,
+    span: Span,
+) -> Result<(String, usize), DslError> {
+    let trimmed = raw.trim();
+    if let Some(base) = trimmed.strip_suffix(":first") {
+        let clean = base.trim();
+        if clean.is_empty() {
+            return Err(DslError::Compile {
+                file: file.to_string(),
+                span,
+                message: "CSS selector before `:first` cannot be empty".to_string(),
+            });
+        }
+        return Ok((clean.to_string(), 0));
+    }
+    if let Some(eq_pos) = trimmed.rfind(":eq(")
+        && trimmed.ends_with(')')
+    {
+        let base = trimmed[..eq_pos].trim();
+        let idx_str = trimmed[eq_pos + 4..trimmed.len() - 1].trim();
+        let idx: usize = idx_str.parse().map_err(|_| DslError::Compile {
+            file: file.to_string(),
+            span,
+            message: format!("invalid `:eq({idx_str})` index in CSS selector `{raw}`"),
+        })?;
+        if base.is_empty() {
+            return Err(DslError::Compile {
+                file: file.to_string(),
+                span,
+                message: format!("CSS selector before `:eq({idx})` cannot be empty"),
+            });
+        }
+        return Ok((base.to_string(), idx));
+    }
+    Ok((trimmed.to_string(), default_nth))
+}
+
 fn infer_content_type(path: &Path) -> Option<&'static str> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     match ext.as_str() {
@@ -747,17 +801,21 @@ mod tests {
         fs::write(
             dir.join("helpers/auth.ferrite"),
             r#"
-            let api_user = "ada"
+            let api_user = "ada";
 
             macro setup_portal(domain) {
-                mock "/api/session" status 200 pattern "*://${domain}/*" {
-                    header "content-type" = "application/json"
-                    body "{\"user\":\"${api_user}\"}"
-                }
-                mock "/login" status 200 pattern "*://${domain}/*" {
-                    header "content-type" = "text/html; charset=utf-8"
-                    body file "../fixtures/login.html"
-                }
+                await mock("GET", "/api/session", {
+                    status: 200,
+                    pattern: "*://${domain}/*",
+                    headers: { "content-type": "application/json" },
+                    body: "{\"user\":\"${api_user}\"}"
+                });
+                await mock("GET", "/login", {
+                    status: 200,
+                    pattern: "*://${domain}/*",
+                    headers: { "content-type": "text/html; charset=utf-8" },
+                    file: "../fixtures/login.html"
+                });
             }
             "#,
         )
@@ -767,23 +825,23 @@ mod tests {
         fs::write(
             &main_file,
             r#"
-            suite "portal-smoke"
-            import "./helpers/auth.ferrite"
+            suite("portal-smoke");
+            import "./helpers/auth.ferrite";
 
-            let base_url = "https://example.com"
+            let base_url = "https://example.com";
 
             beforeEach {
-                use setup_portal("example.com")
-                goto "${base_url}/login" wait load timeout 15s
+                await setup_portal("example.com");
+                await goto("${base_url}/login", "load", 15s);
             }
 
-            test "user signs in" {
-                snapshot interactive
-                fill @e1 "${api_user}@example.com"
-                click role "button" "Sign In" exact
-                expect visible "Dashboard Ready" timeout 5s
-                expect screenshot "dashboard-ready" threshold 0.1 maxDiff 0.001
-                cdp "Page.bringToFront" { "extra": "${api_user}" }
+            test("user signs in") {
+                await snapshot("interactive");
+                await $(@e1).fill("${api_user}@example.com");
+                await $role("button", "Sign In").exact().click();
+                await $text("Dashboard Ready").expect().visible(5s);
+                await screenshot("dashboard-ready", 0.1, 0.001);
+                await cdp("Page.bringToFront", { "extra": "${api_user}" });
             }
             "#,
         )
@@ -822,13 +880,13 @@ mod tests {
 
         let a = dir.join("a.ferrite");
         let b = dir.join("b.ferrite");
-        fs::write(&a, "import \"./b.ferrite\"\n").unwrap();
-        fs::write(&b, "import \"./a.ferrite\"\n").unwrap();
+        fs::write(&a, "import \"./b.ferrite\";\n").unwrap();
+        fs::write(&b, "import \"./a.ferrite\";\n").unwrap();
 
         assert!(matches!(compile_file(&a), Err(DslError::CircularImport(_))));
 
         let bad_var = dir.join("bad_var.ferrite");
-        fs::write(&bad_var, "test \"x\" {\n  goto \"https://${missing}/a\"\n}\n").unwrap();
+        fs::write(&bad_var, "test(\"x\") {\n  await goto(\"https://${missing}/a\");\n}\n").unwrap();
         let err = compile_file(&bad_var).unwrap_err();
         assert!(err.to_string().contains("undefined variable `missing`"));
 
@@ -838,20 +896,19 @@ mod tests {
     #[test]
     fn compiles_extended_interactions_and_hidden_assertions() {
         let src = r#"
-            suite "interactions"
-            test "todomvc-like" {
-                fill role "textbox" "Buy milk" timeout 4s
-                press "Enter"
-                click role "checkbox" nth 1 timeout 3s
-                dblclick text "Buy milk" exact
-                press "Control+a"
-                press "Backspace"
-                type "Buy oat milk"
-                press "Enter"
-                hover text "Buy oat milk"
-                click role "button" "" exact
-                expect hidden "Buy oat milk" timeout 2s
-                reload ignoreCache
+            suite("interactions");
+            test("todomvc-like") {
+                await $role("textbox").timeout(4s).fill("Buy milk").press("Enter");
+                await $role("checkbox").eq(1).click(3s);
+                await $text("Buy milk").exact().dblclick()
+                    .press("Control+a")
+                    .press("Backspace")
+                    .type("Buy oat milk")
+                    .press("Enter");
+                await $text("Buy oat milk").hover();
+                await $role("button", "").exact().click();
+                await $text("Buy oat milk").expect().hidden(2s);
+                await reload(true);
             }
         "#;
         let suite = compile_source("interactions.ferrite", Path::new("."), src).unwrap();
@@ -894,12 +951,12 @@ mod tests {
         assert_eq!(parsed_rec.cases[0].steps.len(), 3);
 
         let console_src = r#"
-            suite "console-suite"
-            test "checks-console" {
-                console start
-                console clear
-                expect console "booted" level info timeout 2s
-                expect noConsoleErrors
+            suite("console-suite");
+            test("checks-console") {
+                await console.start();
+                await console.clear();
+                await console.expect("booted", "info", 2s);
+                await console.noErrors();
             }
         "#;
         let console_suite = compile_source("console.ferrite", Path::new("."), console_src).unwrap();
@@ -912,28 +969,44 @@ mod tests {
     fn rejects_invalid_semantics_at_compile_time() {
         let cases = [
             (
-                r#"test "bad-threshold" { expect screenshot "home" threshold 1.5 }"#,
+                r#"test("bad-threshold") { await screenshot("home", 1.5); }"#,
                 "threshold",
             ),
             (
-                r#"test "bad-maxdiff" { expect screenshot "home" maxDiff 2.0 }"#,
+                r#"test("bad-maxdiff") { await screenshot("home", { maxDiff: 2.0 }); }"#,
                 "maxDiff",
             ),
             (
-                r#"test "bad-name" { expect screenshot "../escape" }"#,
+                r#"test("bad-name") { await screenshot("../escape"); }"#,
                 "invalid screenshot baseline name",
             ),
             (
-                r#"test "bad-status" { mock "/api" status 999 { body "{}" } }"#,
+                r#"test("bad-status") { await mock("GET", "/api", { status: 999, body: "{}" }); }"#,
                 "100 and 599",
             ),
             (
-                r#"test "bad-level" { expect console "hi" level fatal }"#,
+                r#"test("bad-level") { await console.expect("hi", "fatal"); }"#,
                 "invalid console level",
             ),
             (
-                r#"test "blocked-cdp" { cdp "Storage.clearCookies" {} }"#,
+                r#"test("blocked-cdp") { await cdp("Storage.clearCookies", {}); }"#,
                 "blocked for browser profile safety",
+            ),
+            (
+                r#"test("bad-eq") { await $(".item:eq(abc)").click(); }"#,
+                "invalid `:eq(abc)`",
+            ),
+            (
+                r#"test("missing-semicolon") { await sleep(1s) }"#,
+                "`;`",
+            ),
+            (
+                r#"test("missing-expect") { await $("h1").visible(); }"#,
+                "must be called after `.expect()`",
+            ),
+            (
+                r#"test("action-after-expect") { await $("button").expect().click(); }"#,
+                "cannot be called after `.expect()`",
             ),
         ];
 
@@ -954,11 +1027,11 @@ mod tests {
         fs::write(dir.join("mock.json"), r#"{"ok":true,"source":"mock"}"#).unwrap();
 
         let src = r#"
-            suite "api-mock"
-            test "intercepts-real-service" {
-                mock GET "real_service" "mock.json"
-                mock POST "/api/orders" "mock.json" status 201
-                mock clear
+            suite("api-mock");
+            test("intercepts-real-service") {
+                await mock("GET", "real_service", "mock.json");
+                await mock("POST", "/api/orders", "mock.json", 201);
+                await mock.clear();
             }
         "#;
         let suite = compile_source("mock.ferrite", &dir, src).unwrap();
@@ -998,49 +1071,52 @@ mod tests {
     }
 
     #[test]
-    fn compiles_css_selector_actions_and_assertions() {
+    fn compiles_jquery_css_selectors_eq_chaining_and_sleep() {
         let src = r##"
-            suite "css-selectors"
-            test "uses-id-and-class-selectors" {
-                fill css "input.new-todo" "Buy milk" timeout 4s
-                click css "#submit-btn" nth 0 timeout 3s
-                dblclick css ".todo-list li label" nth 1
-                hover css ".todo-list li" nth 0
-                expect visible css ".todo-list li" timeout 3s
-                expect hidden css ".loading-spinner" timeout 2s
-                expect count css ".todo-list li" 2 timeout 4s
+            suite("jquery-selectors");
+            test("uses-jquery-style") {
+                await $("input.new-todo").timeout(4s).val("Buy milk").press("Enter");
+                await $("#submit-btn").click(3s);
+                await $(".todo-list li label:eq(1)").dblclick();
+                await $(".todo-list li:first").hover();
+                await sleep(5s);
+                await $(".todo-list li").expect().visible(3s);
+                await $(".loading-spinner").expect().hidden(2s);
+                await $(".todo-list li").expect().count(2, 4s);
             }
         "##;
         let suite = compile_source("css.ferrite", Path::new("."), src).unwrap();
         let steps = &suite.cases[0].steps;
-        assert_eq!(steps.len(), 7);
+        assert_eq!(steps.len(), 9);
         assert!(matches!(
             &steps[0],
             TestStep::FillCss { selector, text, timeout_ms: 4_000, .. }
                 if selector == "input.new-todo" && text == "Buy milk"
         ));
-        assert!(matches!(
-            &steps[1],
-            TestStep::ClickCss { selector, nth: 0, .. } if selector == "#submit-btn"
-        ));
+        assert!(matches!(&steps[1], TestStep::PressKey { key } if key == "Enter"));
         assert!(matches!(
             &steps[2],
-            TestStep::DblclickCss { selector, nth: 1, .. } if selector == ".todo-list li label"
+            TestStep::ClickCss { selector, nth: 0, timeout_ms: 3_000 } if selector == "#submit-btn"
         ));
         assert!(matches!(
             &steps[3],
-            TestStep::HoverCss { selector, nth: 0, .. } if selector == ".todo-list li"
+            TestStep::DblclickCss { selector, nth: 1, .. } if selector == ".todo-list li label"
         ));
         assert!(matches!(
             &steps[4],
-            TestStep::AssertCssVisible { selector, .. } if selector == ".todo-list li"
+            TestStep::HoverCss { selector, nth: 0, .. } if selector == ".todo-list li"
         ));
-        assert!(matches!(
-            &steps[5],
-            TestStep::AssertCssHidden { selector, .. } if selector == ".loading-spinner"
-        ));
+        assert!(matches!(&steps[5], TestStep::WaitMs { ms: 5_000 }));
         assert!(matches!(
             &steps[6],
+            TestStep::AssertCssVisible { selector, timeout_ms: 3_000, .. } if selector == ".todo-list li"
+        ));
+        assert!(matches!(
+            &steps[7],
+            TestStep::AssertCssHidden { selector, timeout_ms: 2_000, .. } if selector == ".loading-spinner"
+        ));
+        assert!(matches!(
+            &steps[8],
             TestStep::AssertCssCount { selector, expected: 2, timeout_ms: 4_000 }
                 if selector == ".todo-list li"
         ));

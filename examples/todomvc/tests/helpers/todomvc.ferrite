@@ -1,47 +1,48 @@
-// Shared CSS-selector helpers for https://todomvc.com/examples/react/dist/
+// Shared jQuery-style helpers for https://todomvc.com/examples/react/dist/
 
-let app_url = "https://todomvc.com/examples/react/dist/"
+let app_url = "https://todomvc.com/examples/react/dist/";
 
 macro open_clean_app() {
-  goto "about:blank" wait load timeout 10s
-  goto "${app_url}" wait load timeout 15s
-  expect visible css "input.new-todo" timeout 10s
+  await goto("about:blank", "load", 10s);
+  await goto("${app_url}", "load", 15s);
+  await $("input.new-todo").expect().visible(10s);
 }
 
 macro add_todo(title) {
-  fill css "input.new-todo" "${title}" timeout 5s
-  press "Enter"
+  await $("input.new-todo").fill("${title}").press("Enter");
 }
 
 macro toggle_all() {
-  click css ".toggle-all" timeout 5s
+  await $(".toggle-all").click();
 }
 
 macro toggle_first_todo() {
-  click css ".todo-list li .toggle" nth 0 timeout 5s
+  await $(".todo-list li .toggle:eq(0)").click();
 }
 
 macro toggle_second_todo() {
-  click css ".todo-list li .toggle" nth 1 timeout 5s
+  await $(".todo-list li .toggle:eq(1)").click();
 }
 
 macro edit_first_todo(new_title) {
-  dblclick css ".todo-list li label" nth 0 timeout 5s
-  press "Control+a"
-  press "Backspace"
-  type "${new_title}"
-  press "Enter"
+  await $(".todo-list li label:eq(0)")
+    .dblclick()
+    .press("Control+a")
+    .press("Backspace")
+    .type("${new_title}")
+    .press("Enter");
 }
 
 macro edit_first_todo_on_blur(new_title) {
-  dblclick css ".todo-list li label" nth 0 timeout 5s
-  press "Control+a"
-  press "Backspace"
-  type "${new_title}"
-  click css "header.header h1" timeout 5s
+  await $(".todo-list li label:eq(0)")
+    .dblclick()
+    .press("Control+a")
+    .press("Backspace")
+    .type("${new_title}");
+  await $("header.header h1").click();
 }
 
 macro delete_first_todo() {
-  hover css ".todo-list li" nth 0 timeout 5s
-  click css ".todo-list li .destroy" nth 0 timeout 5s
+  await $(".todo-list li:eq(0)").hover();
+  await $(".todo-list li .destroy:eq(0)").click();
 }

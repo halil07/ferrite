@@ -32,10 +32,20 @@ pub fn load_project_config(dir_or_file: &Path) -> Result<Option<(PathBuf, Projec
         dir_or_file
     };
 
-    let manifest_path = start_dir.join("ferrite.toml");
-    if !manifest_path.exists() {
-        return Ok(None);
+    let mut current = Some(start_dir);
+    let mut found_dir: Option<PathBuf> = None;
+    while let Some(dir) = current {
+        if dir.join("ferrite.toml").exists() {
+            found_dir = Some(dir.to_path_buf());
+            break;
+        }
+        current = dir.parent();
     }
+
+    let Some(project_dir) = found_dir else {
+        return Ok(None);
+    };
+    let manifest_path = project_dir.join("ferrite.toml");
 
     let raw = fs::read_to_string(&manifest_path).map_err(|source| DslError::Io {
         path: manifest_path.clone(),
@@ -74,7 +84,7 @@ pub fn load_project_config(dir_or_file: &Path) -> Result<Option<(PathBuf, Projec
         }
     }
 
-    Ok(Some((start_dir.to_path_buf(), cfg)))
+    Ok(Some((project_dir, cfg)))
 }
 
 /// Compiles a `.ferrite` file, a `.json` `TestSuite`, or a project/test directory into runnable
@@ -177,11 +187,11 @@ pub fn default_project_scaffold(dir: &Path, force: bool) -> Result<Vec<PathBuf>,
         ),
         (
             "tests/helpers/auth.ferrite",
-            "// Shared reusable macros & variables for authentication flows\nlet default_user = \"ada\"\nlet default_email = \"ada@example.com\"\n\nmacro mock_login_portal(domain) {\n  mock \"/api/session\" status 200 pattern \"*://${domain}/*\" {\n    header \"content-type\" = \"application/json\"\n    body \"{\\\"authenticated\\\":true,\\\"user\\\":\\\"${default_user}\\\"}\"\n  }\n\n  mock \"/login\" status 200 pattern \"*://${domain}/*\" {\n    header \"content-type\" = \"text/html; charset=utf-8\"\n    body file \"../fixtures/login.html\"\n  }\n}\n\nmacro sign_in(email) {\n  snapshot interactive\n  fill @e1 \"${email}\"\n  click role \"button\" \"Sign In\" exact\n}\n",
+            "// Shared reusable macros & variables for authentication flows\nlet default_user = \"ada\";\nlet default_email = \"ada@example.com\";\n\nmacro mock_login_portal(domain) {\n  await mock(\"GET\", \"/api/session\", {\n    status: 200,\n    pattern: \"*://${domain}/*\",\n    headers: { \"content-type\": \"application/json\" },\n    body: \"{\\\"authenticated\\\":true,\\\"user\\\":\\\"${default_user}\\\"}\"\n  });\n\n  await mock(\"GET\", \"/login\", {\n    status: 200,\n    pattern: \"*://${domain}/*\",\n    headers: { \"content-type\": \"text/html; charset=utf-8\" },\n    file: \"../fixtures/login.html\"\n  });\n}\n\nmacro sign_in(email) {\n  await $(\"#email\").fill(\"${email}\");\n  await $(\"#signin\").click();\n}\n",
         ),
         (
             "tests/login.ferrite",
-            "suite \"ferrite-login-e2e-demo\"\nimport \"./helpers/auth.ferrite\"\n\nlet target_domain = \"example.com\"\n\nbeforeEach {\n  use mock_login_portal(\"${target_domain}\")\n  goto \"https://${target_domain}/login\" wait load timeout 15s\n}\n\ntest \"authenticate-and-verify-dashboard\" {\n  use sign_in(\"${default_email}\")\n  expect visible \"Dashboard Ready\"\n  expect visible \"Welcome ${default_user} (${default_email})\"\n  expect screenshot \"dashboard-ready\" threshold 0.1 maxDiff 0.001\n}\n",
+            "suite(\"ferrite-login-e2e-demo\");\nimport \"./helpers/auth.ferrite\";\n\nlet target_domain = \"example.com\";\n\nbeforeEach {\n  await mock_login_portal(\"${target_domain}\");\n  await goto(\"https://${target_domain}/login\", \"load\", 15s);\n}\n\ntest(\"authenticate-and-verify-dashboard\") {\n  await sign_in(\"${default_email}\");\n  await $text(\"Dashboard Ready\").expect().visible();\n  await $text(\"Welcome ${default_user} (${default_email})\").expect().visible();\n  await screenshot(\"dashboard-ready\", 0.1, 0.001);\n}\n",
         ),
     ];
 

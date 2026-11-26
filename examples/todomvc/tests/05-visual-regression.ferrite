@@ -1,20 +1,20 @@
-suite "todomvc-05-visual-regression"
-import "./helpers/todomvc.ferrite"
+suite("todomvc-05-visual-regression");
+import "./helpers/todomvc.ferrite";
 
 beforeEach {
-  use open_clean_app()
+  await open_clean_app();
 }
 
-test "visual-baseline-empty-and-mixed-list" {
-  expect count css ".todo-list li" 0
-  expect screenshot "todomvc-empty" threshold 0.1 maxDiff 0.005
+test("visual-baseline-empty-and-mixed-list") {
+  await $(".todo-list li").expect().count(0);
+  await screenshot("todomvc-empty", 0.1, 0.005);
 
-  use add_todo("Ship Ferrite DSL")
-  use add_todo("Review visual diff")
-  use toggle_first_todo()
-  expect count css ".todo-list li" 2
-  expect count css ".todo-list li.completed" 1
-  expect visible "1 item left"
+  await add_todo("Ship Ferrite DSL");
+  await add_todo("Review visual diff");
+  await toggle_first_todo();
+  await $(".todo-list li").expect().count(2);
+  await $(".todo-list li.completed").expect().count(1);
+  await $text("1 item left").expect().visible();
 
-  expect screenshot "todomvc-mixed-list" threshold 0.1 maxDiff 0.005
+  await screenshot("todomvc-mixed-list", 0.1, 0.005);
 }

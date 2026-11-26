@@ -21,6 +21,14 @@ pub fn parse_program(file: &str, source_dir: &Path, src: &str) -> Result<Program
     parser.parse_program()
 }
 
+#[derive(Debug, Clone)]
+enum SelectorKind {
+    Css(String),
+    Text(String),
+    Role { role: String, name: Option<String> },
+    Ref(String),
+}
+
 struct Parser<'a> {
     file: &'a str,
     source_dir: &'a Path,
@@ -65,6 +73,15 @@ impl<'a> Parser<'a> {
 
     fn eat_ident(&mut self, expected: &str) -> bool {
         if self.at_ident(expected) {
+            self.bump();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn eat_kind(&mut self, expected: &TokenKind) -> bool {
+        if self.peek_kind() == expected {
             self.bump();
             true
         } else {
@@ -130,6 +147,38 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn expect_bool(&mut self) -> Result<(bool, Span), DslError> {
+        let tok = self.bump();
+        match tok.kind {
+            TokenKind::Ident(ref s) if s == "true" => Ok((true, tok.span)),
+            TokenKind::Ident(ref s) if s == "false" => Ok((false, tok.span)),
+            other => Err(self.err(tok.span, format!("expected boolean, found {other:?}"))),
+        }
+    }
+
+    fn expect_duration_ms(&mut self) -> Result<u64, DslError> {
+        let tok = self.bump();
+        match tok.kind {
+            TokenKind::DurationMs(ms) => Ok(ms),
+            TokenKind::Int(ms) if ms >= 0 => Ok(ms as u64),
+            other => Err(self.err(
+                tok.span,
+                format!("expected duration like `500ms` or `5s`, found {other:?}"),
+            )),
+        }
+    }
+
+    /// Parses either `("str")` or `"str"`.
+    fn expect_optional_paren_string(&mut self) -> Result<(String, Span), DslError> {
+        if self.eat_kind(&TokenKind::LParen) {
+            let s = self.expect_string()?;
+            self.expect_kind(&TokenKind::RParen, "`)`")?;
+            Ok(s)
+        } else {
+            self.expect_string()
+        }
+    }
+
     fn parse_program(&mut self) -> Result<Program, DslError> {
         let mut prog = Program {
             suite_name: None,
@@ -144,33 +193,39 @@ impl<'a> Parser<'a> {
             let (kw, span) = self.expect_ident()?;
             match kw.as_str() {
                 "suite" => {
-                    let (name, _) = self.expect_string()?;
+                    let (name, _) = self.expect_optional_paren_string()?;
+                    self.expect_kind(&TokenKind::Semicolon, "`;` after `suite` declaration")?;
                     if prog.suite_name.is_some() {
                         return Err(self.err(span, "duplicate `suite` declaration"));
                     }
                     prog.suite_name = Some(name);
                 }
                 "import" => {
-                    let (path, p_span) = self.expect_string()?;
+                    let (path, p_span) = self.expect_optional_paren_string()?;
+                    self.expect_kind(&TokenKind::Semicolon, "`;` after `import` statement")?;
                     prog.imports.push((path, p_span));
                 }
-                "let" => {
+                "let" | "const" => {
                     let (name, _) = self.expect_ident()?;
                     self.expect_kind(&TokenKind::Equals, "`=`")?;
                     let (val, val_span) = self.expect_scalar_string()?;
+                    self.expect_kind(&TokenKind::Semicolon, "`;` after variable declaration")?;
                     prog.globals.push((name, val, val_span));
                 }
                 "beforeEach" => {
+                    if self.eat_kind(&TokenKind::LParen) {
+                        self.expect_kind(&TokenKind::RParen, "`)`")?;
+                    }
                     if !prog.before_each.is_empty() {
                         return Err(self.err(span, "duplicate `beforeEach` block"));
                     }
                     prog.before_each = self.parse_block()?;
                 }
-                "macro" => {
+                "macro" | "fn" | "function" => {
                     prog.macros.push(self.parse_macro(span)?);
                 }
                 "test" => {
-                    let (name, _) = self.expect_string()?;
+                    let (name, _) = self.expect_optional_paren_string()?;
                     let body = self.parse_block()?;
                     prog.tests.push(TestCaseAst { name, body, span });
                 }
@@ -178,7 +233,7 @@ impl<'a> Parser<'a> {
                     return Err(self.err(
                         span,
                         format!(
-                            "unexpected top-level keyword `{other}` (expected `suite`, `import`, `let`, `beforeEach`, `macro`, or `test`)"
+                            "unexpected top-level keyword `{other}` (expected `suite`, `import`, `let`, `beforeEach`, `macro`/`fn`, or `test`)"
                         ),
                     ));
                 }
@@ -195,9 +250,7 @@ impl<'a> Parser<'a> {
         while *self.peek_kind() != TokenKind::RParen {
             let (param, _) = self.expect_ident()?;
             params.push(param);
-            if *self.peek_kind() == TokenKind::Comma {
-                self.bump();
-            } else {
+            if !self.eat_kind(&TokenKind::Comma) {
                 break;
             }
         }
@@ -219,508 +272,785 @@ impl<'a> Parser<'a> {
             if *self.peek_kind() == TokenKind::Eof {
                 return Err(self.err(self.peek_span(), "unclosed `{` block"));
             }
-            stmts.push(self.parse_stmt()?);
+            stmts.extend(self.parse_stmt()?);
+            self.expect_kind(&TokenKind::Semicolon, "`;` at end of statement")?;
         }
         self.bump(); // }
         Ok(stmts)
     }
 
-    fn parse_stmt(&mut self) -> Result<Stmt, DslError> {
+    fn parse_stmt(&mut self) -> Result<Vec<Stmt>, DslError> {
+        // Optional `await` prefix for familiar async JS / jQuery readability.
+        let _ = self.eat_ident("await");
+
+        // Direct `@e1.click()` ref chain shorthand.
+        if let TokenKind::Ref(ref_id) = self.peek_kind().clone() {
+            let span = self.peek_span();
+            self.bump();
+            return self.parse_selector_chain(SelectorKind::Ref(ref_id), span);
+        }
+
         let (kw, span) = self.expect_ident()?;
         match kw.as_str() {
-            "let" => {
+            "$" => {
+                self.expect_kind(&TokenKind::LParen, "`(`")?;
+                let sel = match self.peek_kind().clone() {
+                    TokenKind::Ref(ref_id) => {
+                        self.bump();
+                        SelectorKind::Ref(ref_id)
+                    }
+                    _ => {
+                        let (css, _) = self.expect_string()?;
+                        SelectorKind::Css(css)
+                    }
+                };
+                self.expect_kind(&TokenKind::RParen, "`)`")?;
+                self.parse_selector_chain(sel, span)
+            }
+            "$text" => {
+                self.expect_kind(&TokenKind::LParen, "`(`")?;
+                let (text, _) = self.expect_string()?;
+                self.expect_kind(&TokenKind::RParen, "`)`")?;
+                self.parse_selector_chain(SelectorKind::Text(text), span)
+            }
+            "$role" => {
+                self.expect_kind(&TokenKind::LParen, "`(`")?;
+                let (role, _) = self.expect_string()?;
+                let name = if self.eat_kind(&TokenKind::Comma) {
+                    Some(self.expect_string()?.0)
+                } else {
+                    None
+                };
+                self.expect_kind(&TokenKind::RParen, "`)`")?;
+                self.parse_selector_chain(SelectorKind::Role { role, name }, span)
+            }
+            "let" | "const" => {
                 let (name, _) = self.expect_ident()?;
                 self.expect_kind(&TokenKind::Equals, "`=`")?;
                 let (value, _) = self.expect_scalar_string()?;
-                Ok(Stmt::Let { name, value, span })
+                Ok(vec![Stmt::Let { name, value, span }])
             }
             "tab" => {
+                self.expect_kind(&TokenKind::LParen, "`(`")?;
                 let tok = self.bump();
-                match tok.kind {
-                    TokenKind::Int(tab_id) => Ok(Stmt::Tab { tab_id, span }),
-                    other => Err(self.err(tok.span, format!("expected tab ID integer, found {other:?}"))),
-                }
+                let tab_id = match tok.kind {
+                    TokenKind::Int(id) => id,
+                    other => {
+                        return Err(
+                            self.err(tok.span, format!("expected tab ID integer, found {other:?}"))
+                        );
+                    }
+                };
+                self.expect_kind(&TokenKind::RParen, "`)`")?;
+                Ok(vec![Stmt::Tab { tab_id, span }])
             }
+            "sleep" | "wait" => {
+                self.expect_kind(&TokenKind::LParen, "`(`")?;
+                let ms = self.expect_duration_ms()?;
+                self.expect_kind(&TokenKind::RParen, "`)`")?;
+                Ok(vec![Stmt::Wait { ms, span }])
+            }
+            "goto" => Ok(vec![self.parse_goto(span)?]),
+            "reload" => {
+                self.expect_kind(&TokenKind::LParen, "`(`")?;
+                let ignore_cache = if *self.peek_kind() != TokenKind::RParen {
+                    self.expect_bool()?.0
+                } else {
+                    false
+                };
+                self.expect_kind(&TokenKind::RParen, "`)`")?;
+                Ok(vec![Stmt::Reload { ignore_cache, span }])
+            }
+            "press" => {
+                self.expect_kind(&TokenKind::LParen, "`(`")?;
+                let (key, _) = self.expect_string()?;
+                self.expect_kind(&TokenKind::RParen, "`)`")?;
+                Ok(vec![Stmt::PressKey { key, span }])
+            }
+            "type" => {
+                self.expect_kind(&TokenKind::LParen, "`(`")?;
+                let (text, _) = self.expect_string()?;
+                self.expect_kind(&TokenKind::RParen, "`)`")?;
+                Ok(vec![Stmt::TypeText { text, span }])
+            }
+            "snapshot" => {
+                self.expect_kind(&TokenKind::LParen, "`(`")?;
+                let interactive_only = if *self.peek_kind() != TokenKind::RParen {
+                    let (mode, mode_span) = self.expect_string()?;
+                    match mode.as_str() {
+                        "full" => false,
+                        "interactive" => true,
+                        other => {
+                            return Err(self.err(
+                                mode_span,
+                                format!("unknown snapshot mode `{other}` (use \"interactive\" or \"full\")"),
+                            ));
+                        }
+                    }
+                } else {
+                    true
+                };
+                self.expect_kind(&TokenKind::RParen, "`)`")?;
+                Ok(vec![Stmt::Snapshot {
+                    interactive_only,
+                    span,
+                }])
+            }
+            "screenshot" => Ok(vec![self.parse_screenshot(span)?]),
+            "console" => Ok(vec![self.parse_console(span)?]),
+            "mock" => Ok(vec![self.parse_mock(span)?]),
+            "cdp" => Ok(vec![self.parse_cdp(span)?]),
             "use" => {
                 let (macro_name, _) = self.expect_ident()?;
-                self.expect_kind(&TokenKind::LParen, "`(`")?;
-                let mut args = Vec::new();
-                while *self.peek_kind() != TokenKind::RParen {
-                    let (arg, _) = self.expect_scalar_string()?;
-                    args.push(arg);
-                    if *self.peek_kind() == TokenKind::Comma {
-                        self.bump();
-                    } else {
-                        break;
-                    }
-                }
-                self.expect_kind(&TokenKind::RParen, "`)`")?;
-                Ok(Stmt::Use {
+                let args = self.parse_call_scalar_args()?;
+                Ok(vec![Stmt::Use {
                     macro_name,
                     args,
                     span,
-                })
+                }])
             }
-            "goto" => {
-                let (url, _) = self.expect_string()?;
-                let mut wait_until = LoadState::Load;
-                let mut timeout_ms = 15_000u64;
-                loop {
-                    if self.eat_ident("wait") {
-                        let (mode, mode_span) = self.expect_ident()?;
-                        wait_until = match mode.as_str() {
-                            "load" => LoadState::Load,
-                            "domcontentloaded" => LoadState::DomContentLoaded,
-                            "commit" => LoadState::Commit,
-                            other => {
-                                return Err(self.err(
-                                    mode_span,
-                                    format!("unknown wait state `{other}` (use `load`, `domcontentloaded`, or `commit`)"),
-                                ));
-                            }
-                        };
-                    } else if self.eat_ident("timeout") {
-                        timeout_ms = self.expect_duration_ms()?;
-                    } else {
-                        break;
-                    }
-                }
-                Ok(Stmt::Goto {
-                    url,
-                    wait_until,
-                    timeout_ms,
-                    span,
-                })
-            }
-            "snapshot" => {
-                let interactive_only = if self.eat_ident("full") {
-                    false
+            macro_name => {
+                // Direct JS-style macro call: `await add_todo("Buy milk")`
+                if *self.peek_kind() == TokenKind::LParen {
+                    let args = self.parse_call_scalar_args()?;
+                    Ok(vec![Stmt::Use {
+                        macro_name: macro_name.to_string(),
+                        args,
+                        span,
+                    }])
                 } else {
-                    let _ = self.eat_ident("interactive");
-                    true
-                };
-                Ok(Stmt::Snapshot {
-                    interactive_only,
-                    span,
-                })
-            }
-            "click" => {
-                if self.eat_ident("role") {
-                    let (role, _) = self.expect_string()?;
-                    let name = if matches!(self.peek_kind(), TokenKind::Str(_)) {
-                        Some(self.expect_string()?.0)
-                    } else {
-                        None
-                    };
-                    let (exact, nth, timeout_ms) = self.parse_match_modifiers(5_000, true)?;
-                    Ok(Stmt::ClickRole {
-                        role,
-                        name,
-                        exact,
-                        nth,
-                        timeout_ms,
+                    Err(self.err(
                         span,
-                    })
-                } else if self.eat_ident("css") || self.eat_ident("selector") {
-                    let (selector, _) = self.expect_string()?;
-                    let (_, nth, timeout_ms) = self.parse_match_modifiers(5_000, true)?;
-                    Ok(Stmt::ClickCss {
-                        selector,
-                        nth,
-                        timeout_ms,
-                        span,
-                    })
-                } else {
-                    let ref_id = self.expect_ref()?;
-                    Ok(Stmt::ClickRef { ref_id, span })
+                        format!(
+                            "unexpected statement `{macro_name}`; use jQuery selectors like `$(\"...\").click()`, built-ins like `goto(...)` / `sleep(5s)`, or call a macro `{macro_name}(...)`"
+                        ),
+                    ))
                 }
             }
-            "fill" => {
-                if self.eat_ident("role") {
-                    let (role, _) = self.expect_string()?;
-                    let first = self.expect_string()?.0;
-                    let (name, text) = if matches!(self.peek_kind(), TokenKind::Str(_)) {
-                        (Some(first), self.expect_string()?.0)
-                    } else {
-                        (None, first)
-                    };
-                    let (exact, nth, timeout_ms) = self.parse_match_modifiers(5_000, true)?;
-                    Ok(Stmt::FillRole {
-                        role,
-                        name,
-                        text,
-                        exact,
-                        nth,
-                        timeout_ms,
-                        span,
-                    })
-                } else if self.eat_ident("css") || self.eat_ident("selector") {
-                    let (selector, _) = self.expect_string()?;
-                    let (text, _) = self.expect_string()?;
-                    let (_, nth, timeout_ms) = self.parse_match_modifiers(5_000, true)?;
-                    Ok(Stmt::FillCss {
-                        selector,
-                        text,
-                        nth,
-                        timeout_ms,
-                        span,
-                    })
-                } else {
-                    let ref_id = self.expect_ref()?;
-                    let (text, _) = self.expect_string()?;
-                    Ok(Stmt::FillRef { ref_id, text, span })
-                }
-            }
-            "dblclick" => {
-                if self.eat_ident("text") {
-                    let (text, _) = self.expect_string()?;
-                    let (exact, nth, timeout_ms) = self.parse_match_modifiers(5_000, true)?;
-                    Ok(Stmt::DblclickText {
-                        text,
-                        exact,
-                        nth,
-                        timeout_ms,
-                        span,
-                    })
-                } else if self.eat_ident("css") || self.eat_ident("selector") {
-                    let (selector, _) = self.expect_string()?;
-                    let (_, nth, timeout_ms) = self.parse_match_modifiers(5_000, true)?;
-                    Ok(Stmt::DblclickCss {
-                        selector,
-                        nth,
-                        timeout_ms,
-                        span,
-                    })
-                } else {
-                    let ref_id = self.expect_ref()?;
-                    Ok(Stmt::DblclickRef { ref_id, span })
-                }
-            }
-            "hover" => {
-                if self.eat_ident("text") {
-                    let (text, _) = self.expect_string()?;
-                    let (exact, nth, timeout_ms) = self.parse_match_modifiers(5_000, true)?;
-                    Ok(Stmt::HoverText {
-                        text,
-                        exact,
-                        nth,
-                        timeout_ms,
-                        span,
-                    })
-                } else if self.eat_ident("css") || self.eat_ident("selector") {
-                    let (selector, _) = self.expect_string()?;
-                    let (_, nth, timeout_ms) = self.parse_match_modifiers(5_000, true)?;
-                    Ok(Stmt::HoverCss {
-                        selector,
-                        nth,
-                        timeout_ms,
-                        span,
-                    })
-                } else {
-                    let ref_id = self.expect_ref()?;
-                    Ok(Stmt::HoverRef { ref_id, span })
-                }
-            }
-            "press" => {
-                let (key, _) = self.expect_string()?;
-                Ok(Stmt::PressKey { key, span })
-            }
-            "type" => {
-                let (text, _) = self.expect_string()?;
-                Ok(Stmt::TypeText { text, span })
-            }
-            "reload" => {
-                let ignore_cache = self.eat_ident("ignoreCache") || self.eat_ident("ignore_cache");
-                Ok(Stmt::Reload { ignore_cache, span })
-            }
-            "console" => {
-                let (sub, sub_span) = self.expect_ident()?;
-                match sub.as_str() {
-                    "start" => Ok(Stmt::ConsoleStart { span }),
-                    "clear" => Ok(Stmt::ConsoleClear { span }),
-                    other => Err(self.err(
-                        sub_span,
-                        format!("unknown `console` action `{other}` (use `start` or `clear`)"),
-                    )),
-                }
-            }
-            "expect" => {
-                let (kind, k_span) = self.expect_ident()?;
-                match kind.as_str() {
-                    "visible" => {
-                        if self.eat_ident("css") || self.eat_ident("selector") {
-                            let (selector, _) = self.expect_string()?;
-                            let (_, nth, timeout_ms) = self.parse_match_modifiers(5_000, true)?;
-                            Ok(Stmt::ExpectCssVisible {
-                                selector,
-                                nth,
-                                timeout_ms,
-                                span,
-                            })
-                        } else {
-                            let (text, _) = self.expect_string()?;
-                            let (exact, _, timeout_ms) = self.parse_match_modifiers(5_000, false)?;
-                            Ok(Stmt::ExpectVisible {
-                                text,
-                                exact,
-                                timeout_ms,
-                                span,
-                            })
-                        }
-                    }
-                    "hidden" => {
-                        if self.eat_ident("css") || self.eat_ident("selector") {
-                            let (selector, _) = self.expect_string()?;
-                            let (_, nth, timeout_ms) = self.parse_match_modifiers(5_000, true)?;
-                            Ok(Stmt::ExpectCssHidden {
-                                selector,
-                                nth,
-                                timeout_ms,
-                                span,
-                            })
-                        } else {
-                            let (text, _) = self.expect_string()?;
-                            let (exact, _, timeout_ms) = self.parse_match_modifiers(5_000, false)?;
-                            Ok(Stmt::ExpectHidden {
-                                text,
-                                exact,
-                                timeout_ms,
-                                span,
-                            })
-                        }
-                    }
-                    "count" => {
-                        if !self.eat_ident("css") && !self.eat_ident("selector") {
-                            return Err(self.err(
-                                self.peek_span(),
-                                "expected `css` after `expect count` (e.g. `expect count css \".item\" 3`)",
-                            ));
-                        }
-                        let (selector, _) = self.expect_string()?;
-                        let (expected_u64, _) = self.expect_u64_int()?;
-                        let (_, _, timeout_ms) = self.parse_match_modifiers(5_000, false)?;
-                        Ok(Stmt::ExpectCssCount {
-                            selector,
-                            expected: expected_u64 as usize,
-                            timeout_ms,
-                            span,
-                        })
-                    }
-                    "noConsoleErrors" | "no_console_errors" => {
-                        Ok(Stmt::ExpectNoConsoleErrors { span })
-                    }
-                    "console" => {
-                        let (text, _) = self.expect_string()?;
-                        let mut level = None;
-                        let mut timeout_ms = 5_000u64;
-                        loop {
-                            if self.eat_ident("level") {
-                                let (lvl, _) = self.expect_ident()?;
-                                level = Some(lvl);
-                            } else if self.eat_ident("timeout") {
-                                timeout_ms = self.expect_duration_ms()?;
-                            } else {
-                                break;
-                            }
-                        }
-                        Ok(Stmt::ExpectConsole {
-                            text,
-                            level,
-                            timeout_ms,
-                            span,
-                        })
-                    }
-                    "screenshot" => {
-                        let (name, _) = self.expect_string()?;
-                        let mut threshold = None;
-                        let mut max_diff_ratio = None;
-                        loop {
-                            if self.eat_ident("threshold") {
-                                threshold = Some(self.expect_f64()?.0);
-                            } else if self.eat_ident("maxDiff") || self.eat_ident("max_diff") {
-                                max_diff_ratio = Some(self.expect_f64()?.0);
-                            } else {
-                                break;
-                            }
-                        }
-                        Ok(Stmt::ExpectScreenshot {
-                            name,
-                            max_diff_ratio,
-                            threshold,
-                            span,
-                        })
-                    }
-                    other => Err(self.err(
-                        k_span,
-                        format!("unknown `expect` assertion `{other}` (use `visible`, `hidden`, or `screenshot`)"),
-                    )),
-                }
-            }
-            "wait" => {
-                let ms = self.expect_duration_ms()?;
-                Ok(Stmt::Wait { ms, span })
-            }
-            "cdp" => {
-                let (method, _) = self.expect_string()?;
-                let params = match self.peek_kind() {
-                    TokenKind::LBrace | TokenKind::LBracket => self.parse_json_value()?,
-                    TokenKind::Str(_) => {
-                        let (raw_json, j_span) = self.expect_string()?;
-                        serde_json::from_str(&raw_json).map_err(|err| {
-                            self.err(j_span, format!("invalid JSON params for `cdp`: {err}"))
-                        })?
-                    }
-                    _ => Value::Object(Map::new()),
-                };
-                Ok(Stmt::Cdp {
-                    method,
-                    params,
-                    span,
-                })
-            }
-            "mock" => self.parse_mock(span),
-            other => Err(self.err(span, format!("unknown statement keyword `{other}`"))),
         }
     }
 
-    fn parse_match_modifiers(
-        &mut self,
-        default_timeout_ms: u64,
-        allow_nth: bool,
-    ) -> Result<(bool, usize, u64), DslError> {
-        let mut exact = false;
-        let mut nth = 0usize;
-        let mut timeout_ms = default_timeout_ms;
-        loop {
-            if self.eat_ident("exact") {
-                exact = true;
-            } else if allow_nth && self.eat_ident("nth") {
-                let (val, _) = self.expect_u64_int()?;
-                nth = val as usize;
-            } else if self.eat_ident("timeout") {
-                timeout_ms = self.expect_duration_ms()?;
-            } else {
+    fn parse_call_scalar_args(&mut self) -> Result<Vec<String>, DslError> {
+        self.expect_kind(&TokenKind::LParen, "`(`")?;
+        let mut args = Vec::new();
+        while *self.peek_kind() != TokenKind::RParen {
+            let (arg, _) = self.expect_scalar_string()?;
+            args.push(arg);
+            if !self.eat_kind(&TokenKind::Comma) {
                 break;
             }
         }
-        Ok((exact, nth, timeout_ms))
+        self.expect_kind(&TokenKind::RParen, "`)`")?;
+        Ok(args)
     }
 
-    fn expect_ref(&mut self) -> Result<String, DslError> {
-        let tok = self.bump();
-        match tok.kind {
-            TokenKind::Ref(id) => Ok(id),
+    fn parse_selector_chain(
+        &mut self,
+        selector: SelectorKind,
+        span: Span,
+    ) -> Result<Vec<Stmt>, DslError> {
+        let mut nth: usize = 0;
+        let mut exact = false;
+        let mut timeout_ms: u64 = 5_000;
+        let mut in_expect = false;
+        let mut expect_emitted = false;
+        let mut emitted: Vec<Stmt> = Vec::new();
+
+        while self.eat_kind(&TokenKind::Dot) {
+            let (method, m_span) = self.expect_ident()?;
+            self.expect_kind(&TokenKind::LParen, "`(`")?;
+
+            match method.as_str() {
+                "expect" => {
+                    if in_expect {
+                        return Err(self.err(m_span, "duplicate `.expect()` in selector chain"));
+                    }
+                    timeout_ms = self.parse_optional_timeout_arg(timeout_ms)?;
+                    self.expect_kind(&TokenKind::RParen, "`)`")?;
+                    in_expect = true;
+                    expect_emitted = false;
+                }
+                "eq" | "nth" => {
+                    if in_expect {
+                        return Err(self.err(
+                            m_span,
+                            "call `.eq()` before `.expect()` (e.g. `$(\"...\").eq(0).expect().visible()`)",
+                        ));
+                    }
+                    let (idx, _) = self.expect_u64_int()?;
+                    nth = idx as usize;
+                    self.expect_kind(&TokenKind::RParen, "`)`")?;
+                }
+                "first" => {
+                    if in_expect {
+                        return Err(self.err(
+                            m_span,
+                            "call `.first()` before `.expect()` (e.g. `$(\"...\").first().expect().visible()`)",
+                        ));
+                    }
+                    nth = 0;
+                    self.expect_kind(&TokenKind::RParen, "`)`")?;
+                }
+                "exact" => {
+                    if in_expect {
+                        return Err(self.err(
+                            m_span,
+                            "call `.exact()` before `.expect()` (e.g. `$text(\"...\").exact().expect().visible()`)",
+                        ));
+                    }
+                    exact = if *self.peek_kind() != TokenKind::RParen {
+                        self.expect_bool()?.0
+                    } else {
+                        true
+                    };
+                    self.expect_kind(&TokenKind::RParen, "`)`")?;
+                }
+                "timeout" => {
+                    timeout_ms = self.expect_duration_ms()?;
+                    self.expect_kind(&TokenKind::RParen, "`)`")?;
+                }
+                "click" | "dblclick" | "hover" | "fill" | "val" | "press" | "type" | "sleep"
+                | "wait"
+                    if in_expect =>
+                {
+                    return Err(self.err(
+                        m_span,
+                        format!(
+                            "action `.{method}()` cannot be called after `.expect()`; call `.{method}()` directly on the selector"
+                        ),
+                    ));
+                }
+                "click" => {
+                    let t = self.parse_optional_timeout_arg(timeout_ms)?;
+                    self.expect_kind(&TokenKind::RParen, "`)`")?;
+                    match &selector {
+                        SelectorKind::Css(css) => emitted.push(Stmt::ClickCss {
+                            selector: css.clone(),
+                            nth,
+                            timeout_ms: t,
+                            span: m_span,
+                        }),
+                        SelectorKind::Role { role, name } => emitted.push(Stmt::ClickRole {
+                            role: role.clone(),
+                            name: name.clone(),
+                            exact,
+                            nth,
+                            timeout_ms: t,
+                            span: m_span,
+                        }),
+                        SelectorKind::Ref(ref_id) => emitted.push(Stmt::ClickRef {
+                            ref_id: ref_id.clone(),
+                            span: m_span,
+                        }),
+                        SelectorKind::Text(_) => {
+                            return Err(self.err(
+                                m_span,
+                                "`.click()` is supported on `$(\"css\")`, `$role(...)`, and `$(@ref)` (for text use `.dblclick()`, `.hover()`, or `.expect().visible()` / `.expect().hidden()`)",
+                            ));
+                        }
+                    }
+                }
+                "dblclick" => {
+                    let t = self.parse_optional_timeout_arg(timeout_ms)?;
+                    self.expect_kind(&TokenKind::RParen, "`)`")?;
+                    match &selector {
+                        SelectorKind::Css(css) => emitted.push(Stmt::DblclickCss {
+                            selector: css.clone(),
+                            nth,
+                            timeout_ms: t,
+                            span: m_span,
+                        }),
+                        SelectorKind::Text(text) => emitted.push(Stmt::DblclickText {
+                            text: text.clone(),
+                            exact,
+                            nth,
+                            timeout_ms: t,
+                            span: m_span,
+                        }),
+                        SelectorKind::Ref(ref_id) => emitted.push(Stmt::DblclickRef {
+                            ref_id: ref_id.clone(),
+                            span: m_span,
+                        }),
+                        SelectorKind::Role { .. } => {
+                            return Err(self.err(
+                                m_span,
+                                "`.dblclick()` is supported on `$(\"css\")`, `$text(...)`, and `$(@ref)`",
+                            ));
+                        }
+                    }
+                }
+                "hover" => {
+                    let t = self.parse_optional_timeout_arg(timeout_ms)?;
+                    self.expect_kind(&TokenKind::RParen, "`)`")?;
+                    match &selector {
+                        SelectorKind::Css(css) => emitted.push(Stmt::HoverCss {
+                            selector: css.clone(),
+                            nth,
+                            timeout_ms: t,
+                            span: m_span,
+                        }),
+                        SelectorKind::Text(text) => emitted.push(Stmt::HoverText {
+                            text: text.clone(),
+                            exact,
+                            nth,
+                            timeout_ms: t,
+                            span: m_span,
+                        }),
+                        SelectorKind::Ref(ref_id) => emitted.push(Stmt::HoverRef {
+                            ref_id: ref_id.clone(),
+                            span: m_span,
+                        }),
+                        SelectorKind::Role { .. } => {
+                            return Err(self.err(
+                                m_span,
+                                "`.hover()` is supported on `$(\"css\")`, `$text(...)`, and `$(@ref)`",
+                            ));
+                        }
+                    }
+                }
+                "fill" | "val" => {
+                    let (text, _) = self.expect_string()?;
+                    let t = if self.eat_kind(&TokenKind::Comma) {
+                        self.expect_duration_ms()?
+                    } else {
+                        timeout_ms
+                    };
+                    self.expect_kind(&TokenKind::RParen, "`)`")?;
+                    match &selector {
+                        SelectorKind::Css(css) => emitted.push(Stmt::FillCss {
+                            selector: css.clone(),
+                            text,
+                            nth,
+                            timeout_ms: t,
+                            span: m_span,
+                        }),
+                        SelectorKind::Role { role, name } => emitted.push(Stmt::FillRole {
+                            role: role.clone(),
+                            name: name.clone(),
+                            text,
+                            exact,
+                            nth,
+                            timeout_ms: t,
+                            span: m_span,
+                        }),
+                        SelectorKind::Ref(ref_id) => emitted.push(Stmt::FillRef {
+                            ref_id: ref_id.clone(),
+                            text,
+                            span: m_span,
+                        }),
+                        SelectorKind::Text(_) => {
+                            return Err(self.err(
+                                m_span,
+                                "`.fill()` / `.val()` is supported on `$(\"css\")`, `$role(...)`, and `$(@ref)`",
+                            ));
+                        }
+                    }
+                }
+                "press" => {
+                    let (key, _) = self.expect_string()?;
+                    self.expect_kind(&TokenKind::RParen, "`)`")?;
+                    emitted.push(Stmt::PressKey { key, span: m_span });
+                }
+                "type" => {
+                    let (text, _) = self.expect_string()?;
+                    self.expect_kind(&TokenKind::RParen, "`)`")?;
+                    emitted.push(Stmt::TypeText { text, span: m_span });
+                }
+                "sleep" | "wait" => {
+                    let ms = self.expect_duration_ms()?;
+                    self.expect_kind(&TokenKind::RParen, "`)`")?;
+                    emitted.push(Stmt::Wait { ms, span: m_span });
+                }
+                "visible" | "shouldBeVisible" | "isVisible" | "hidden" | "shouldBeHidden"
+                | "isHidden" | "count" | "shouldHaveCount"
+                    if !in_expect =>
+                {
+                    return Err(self.err(
+                        m_span,
+                        format!(
+                            "assertion `.{method}()` must be called after `.expect()` (e.g. `.expect().{method}()`)"
+                        ),
+                    ));
+                }
+                "visible" | "shouldBeVisible" | "isVisible" => {
+                    let t = self.parse_optional_timeout_arg(timeout_ms)?;
+                    self.expect_kind(&TokenKind::RParen, "`)`")?;
+                    expect_emitted = true;
+                    match &selector {
+                        SelectorKind::Css(css) => emitted.push(Stmt::ExpectCssVisible {
+                            selector: css.clone(),
+                            nth,
+                            timeout_ms: t,
+                            span: m_span,
+                        }),
+                        SelectorKind::Text(text) => emitted.push(Stmt::ExpectVisible {
+                            text: text.clone(),
+                            exact,
+                            timeout_ms: t,
+                            span: m_span,
+                        }),
+                        _ => {
+                            return Err(self.err(
+                                m_span,
+                                "`.expect().visible()` is supported on `$(\"css\")` and `$text(\"...\")`",
+                            ));
+                        }
+                    }
+                }
+                "hidden" | "shouldBeHidden" | "isHidden" => {
+                    let t = self.parse_optional_timeout_arg(timeout_ms)?;
+                    self.expect_kind(&TokenKind::RParen, "`)`")?;
+                    expect_emitted = true;
+                    match &selector {
+                        SelectorKind::Css(css) => emitted.push(Stmt::ExpectCssHidden {
+                            selector: css.clone(),
+                            nth,
+                            timeout_ms: t,
+                            span: m_span,
+                        }),
+                        SelectorKind::Text(text) => emitted.push(Stmt::ExpectHidden {
+                            text: text.clone(),
+                            exact,
+                            timeout_ms: t,
+                            span: m_span,
+                        }),
+                        _ => {
+                            return Err(self.err(
+                                m_span,
+                                "`.expect().hidden()` is supported on `$(\"css\")` and `$text(\"...\")`",
+                            ));
+                        }
+                    }
+                }
+                "count" | "shouldHaveCount" => {
+                    let (expected, _) = self.expect_u64_int()?;
+                    let t = if self.eat_kind(&TokenKind::Comma) {
+                        self.expect_duration_ms()?
+                    } else {
+                        timeout_ms
+                    };
+                    self.expect_kind(&TokenKind::RParen, "`)`")?;
+                    expect_emitted = true;
+                    match &selector {
+                        SelectorKind::Css(css) => emitted.push(Stmt::ExpectCssCount {
+                            selector: css.clone(),
+                            expected: expected as usize,
+                            timeout_ms: t,
+                            span: m_span,
+                        }),
+                        _ => {
+                            return Err(self.err(
+                                m_span,
+                                "`.expect().count(n)` is only supported on CSS selectors `$(\"...\")`",
+                            ));
+                        }
+                    }
+                }
+                other => {
+                    let hint = if in_expect {
+                        "expected assertion after `.expect()`: `.visible()`, `.hidden()`, or `.count(n)`"
+                    } else {
+                        "use `.eq()`, `.first()`, `.exact()`, `.timeout()`, `.click()`, `.dblclick()`, `.hover()`, `.fill()`/`.val()`, `.press()`, `.type()`, or `.expect()`"
+                    };
+                    return Err(self.err(
+                        m_span,
+                        format!("unknown selector method `.{other}()` ({hint})"),
+                    ));
+                }
+            }
+        }
+
+        if in_expect && !expect_emitted {
+            return Err(self.err(
+                span,
+                "`.expect()` must be followed by an assertion like `.visible()`, `.hidden()`, or `.count(n)`",
+            ));
+        }
+
+        if emitted.is_empty() {
+            return Err(self.err(
+                span,
+                "selector must be followed by an action (`.click()`, `.dblclick()`, `.fill(\"...\")`) or `.expect().visible()` / `.expect().hidden()` / `.expect().count(n)`",
+            ));
+        }
+
+        Ok(emitted)
+    }
+
+    fn parse_optional_timeout_arg(&mut self, default_ms: u64) -> Result<u64, DslError> {
+        if *self.peek_kind() != TokenKind::RParen {
+            self.expect_duration_ms()
+        } else {
+            Ok(default_ms)
+        }
+    }
+
+    fn parse_goto(&mut self, span: Span) -> Result<Stmt, DslError> {
+        self.expect_kind(&TokenKind::LParen, "`(`")?;
+        let (url, _) = self.expect_string()?;
+        let mut wait_until = LoadState::Load;
+        let mut timeout_ms = 15_000u64;
+
+        if self.eat_kind(&TokenKind::Comma) {
+            match self.peek_kind() {
+                TokenKind::LBrace => {
+                    let opts = self.parse_options_object()?;
+                    if let Some((w, w_span)) = opts.get("wait") {
+                        wait_until = self.parse_load_state_val(w, *w_span)?;
+                    }
+                    if let Some((t, t_span)) = opts.get("timeout") {
+                        timeout_ms = self.parse_duration_val(t, *t_span)?;
+                    }
+                }
+                TokenKind::Str(_) => {
+                    let (mode, m_span) = self.expect_string()?;
+                    wait_until = self.parse_load_state_str(&mode, m_span)?;
+                    if self.eat_kind(&TokenKind::Comma) {
+                        timeout_ms = self.expect_duration_ms()?;
+                    }
+                }
+                TokenKind::DurationMs(_) | TokenKind::Int(_) => {
+                    timeout_ms = self.expect_duration_ms()?;
+                }
+                other => {
+                    return Err(self.err(
+                        self.peek_span(),
+                        format!(
+                            "unexpected `goto` option {other:?} (expected wait state string, duration, or `{{ wait, timeout }}`)"
+                        ),
+                    ));
+                }
+            }
+        }
+
+        self.expect_kind(&TokenKind::RParen, "`)`")?;
+        Ok(Stmt::Goto {
+            url,
+            wait_until,
+            timeout_ms,
+            span,
+        })
+    }
+
+    fn parse_load_state_str(&self, mode: &str, span: Span) -> Result<LoadState, DslError> {
+        match mode.to_ascii_lowercase().as_str() {
+            "load" => Ok(LoadState::Load),
+            "domcontentloaded" => Ok(LoadState::DomContentLoaded),
+            "commit" => Ok(LoadState::Commit),
             other => Err(self.err(
-                tok.span,
-                format!("expected element ref like `@e1`, found {other:?}"),
+                span,
+                format!("unknown wait state `{other}` (use \"load\", \"domcontentloaded\", or \"commit\")"),
             )),
         }
     }
 
-    fn expect_duration_ms(&mut self) -> Result<u64, DslError> {
-        let tok = self.bump();
-        match tok.kind {
-            TokenKind::DurationMs(ms) => Ok(ms),
-            TokenKind::Int(ms) if ms >= 0 => Ok(ms as u64),
-            other => Err(self.err(
-                tok.span,
-                format!("expected duration like `500ms` or `15s`, found {other:?}"),
-            )),
+    fn parse_load_state_val(&self, val: &TokenKind, span: Span) -> Result<LoadState, DslError> {
+        match val {
+            TokenKind::Str(s) | TokenKind::Ident(s) => self.parse_load_state_str(s, span),
+            other => Err(self.err(span, format!("expected wait state string, found {other:?}"))),
         }
+    }
+
+    fn parse_duration_val(&self, val: &TokenKind, span: Span) -> Result<u64, DslError> {
+        match val {
+            TokenKind::DurationMs(ms) => Ok(*ms),
+            TokenKind::Int(ms) if *ms >= 0 => Ok(*ms as u64),
+            other => Err(self.err(span, format!("expected duration, found {other:?}"))),
+        }
+    }
+
+    fn parse_f64_val(&self, val: &TokenKind, span: Span) -> Result<f64, DslError> {
+        match val {
+            TokenKind::Float(f) => Ok(*f),
+            TokenKind::Int(i) => Ok(*i as f64),
+            other => Err(self.err(span, format!("expected number, found {other:?}"))),
+        }
+    }
+
+    fn parse_options_object(&mut self) -> Result<HashMap<String, (TokenKind, Span)>, DslError> {
+        self.expect_kind(&TokenKind::LBrace, "`{`")?;
+        let mut map = HashMap::new();
+        while *self.peek_kind() != TokenKind::RBrace {
+            if *self.peek_kind() == TokenKind::Eof {
+                return Err(self.err(self.peek_span(), "unclosed `{` options object"));
+            }
+            let key = match self.bump() {
+                Token {
+                    kind: TokenKind::Ident(k) | TokenKind::Str(k),
+                    ..
+                } => k,
+                other => {
+                    return Err(
+                        self.err(other.span, format!("expected option key, found {:?}", other.kind))
+                    );
+                }
+            };
+            self.expect_kind(&TokenKind::Colon, "`:`")?;
+            let val = self.bump();
+            map.insert(key, (val.kind, val.span));
+            if !self.eat_kind(&TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect_kind(&TokenKind::RBrace, "`}`")?;
+        Ok(map)
+    }
+
+    fn parse_screenshot(&mut self, span: Span) -> Result<Stmt, DslError> {
+        self.expect_kind(&TokenKind::LParen, "`(`")?;
+        let (name, _) = self.expect_string()?;
+        let mut threshold = None;
+        let mut max_diff_ratio = None;
+
+        if self.eat_kind(&TokenKind::Comma) {
+            if *self.peek_kind() == TokenKind::LBrace {
+                let opts = self.parse_options_object()?;
+                if let Some((t, s)) = opts.get("threshold") {
+                    threshold = Some(self.parse_f64_val(t, *s)?);
+                }
+                if let Some((m, s)) = opts.get("maxDiff").or_else(|| opts.get("max_diff")) {
+                    max_diff_ratio = Some(self.parse_f64_val(m, *s)?);
+                }
+            } else {
+                threshold = Some(self.expect_f64()?.0);
+                if self.eat_kind(&TokenKind::Comma) {
+                    max_diff_ratio = Some(self.expect_f64()?.0);
+                }
+            }
+        }
+
+        self.expect_kind(&TokenKind::RParen, "`)`")?;
+        Ok(Stmt::ExpectScreenshot {
+            name,
+            max_diff_ratio,
+            threshold,
+            span,
+        })
+    }
+
+    fn parse_console(&mut self, span: Span) -> Result<Stmt, DslError> {
+        self.expect_kind(&TokenKind::Dot, "`.`")?;
+        let (sub, sub_span) = self.expect_ident()?;
+        self.expect_kind(&TokenKind::LParen, "`(`")?;
+        let stmt = match sub.as_str() {
+            "start" => Stmt::ConsoleStart { span },
+            "clear" => Stmt::ConsoleClear { span },
+            "noErrors" | "no_errors" => Stmt::ExpectNoConsoleErrors { span },
+            "expect" => {
+                let (text, _) = self.expect_string()?;
+                let mut level = None;
+                let mut timeout_ms = 5_000u64;
+                if self.eat_kind(&TokenKind::Comma) {
+                    if matches!(self.peek_kind(), TokenKind::Str(_)) {
+                        level = Some(self.expect_string()?.0);
+                        if self.eat_kind(&TokenKind::Comma) {
+                            timeout_ms = self.expect_duration_ms()?;
+                        }
+                    } else {
+                        timeout_ms = self.expect_duration_ms()?;
+                    }
+                }
+                Stmt::ExpectConsole {
+                    text,
+                    level,
+                    timeout_ms,
+                    span,
+                }
+            }
+            other => {
+                return Err(self.err(
+                    sub_span,
+                    format!(
+                        "unknown `console.{other}()` method (use `console.start()`, `console.clear()`, `console.noErrors()`, or `console.expect(...)`)"
+                    ),
+                ));
+            }
+        };
+        self.expect_kind(&TokenKind::RParen, "`)`")?;
+        Ok(stmt)
+    }
+
+    fn parse_cdp(&mut self, span: Span) -> Result<Stmt, DslError> {
+        self.expect_kind(&TokenKind::LParen, "`(`")?;
+        let (method, _) = self.expect_string()?;
+        let params = if self.eat_kind(&TokenKind::Comma) {
+            self.parse_json_value()?
+        } else {
+            Value::Object(Map::new())
+        };
+        self.expect_kind(&TokenKind::RParen, "`)`")?;
+        Ok(Stmt::Cdp {
+            method,
+            params,
+            span,
+        })
     }
 
     fn parse_mock(&mut self, span: Span) -> Result<Stmt, DslError> {
-        if self.eat_ident("clear") {
-            return Ok(Stmt::MockClear { span });
+        if self.eat_kind(&TokenKind::Dot) {
+            let (sub, sub_span) = self.expect_ident()?;
+            self.expect_kind(&TokenKind::LParen, "`(`")?;
+            self.expect_kind(&TokenKind::RParen, "`)`")?;
+            if sub == "clear" {
+                return Ok(Stmt::MockClear { span });
+            }
+            return Err(self.err(
+                sub_span,
+                format!("unknown `mock.{sub}()` method (use `mock.clear()`)"),
+            ));
         }
 
-        // Optional HTTP method before URL: e.g. `mock GET "real_service" "mock.json"`
-        let method = if let TokenKind::Ident(ident) = self.peek_kind() {
-            let upper = ident.to_ascii_uppercase();
-            if matches!(
-                upper.as_str(),
-                "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" | "ANY"
-            ) {
-                self.bump();
-                if upper == "ANY" { None } else { Some(upper) }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let (url_substring, _) = self.expect_string()?;
+        self.expect_kind(&TokenKind::LParen, "`(`")?;
+        let (first, _) = self.expect_string()?;
+        let mut method: Option<String> = None;
+        let url_substring: String;
         let mut status: u16 = 200;
         let mut headers = HashMap::new();
         let mut patterns = Vec::new();
         let mut body: Option<MockBodyAst> = None;
 
-        // Shorthand fixture file path: `mock GET "real_service" "mock.json"`
-        if matches!(self.peek_kind(), TokenKind::Str(_)) {
-            let (rel_file, _) = self.expect_string()?;
-            body = Some(MockBodyAst::File(rel_file));
-        }
+        // Check if first argument is an HTTP method: `mock("GET", "real_service", "mock.json")`
+        let first_upper = first.to_ascii_uppercase();
+        let is_http_method = matches!(
+            first_upper.as_str(),
+            "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" | "ANY"
+        );
 
-        loop {
-            if self.eat_ident("status") {
-                let (code, code_span) = self.expect_u64_int()?;
-                status = u16::try_from(code)
-                    .map_err(|_| self.err(code_span, format!("invalid HTTP status code {code}")))?;
-            } else if self.eat_ident("pattern") {
-                let (pat, _) = self.expect_string()?;
-                patterns.push(pat);
-            } else {
-                break;
+        if is_http_method && self.eat_kind(&TokenKind::Comma) {
+            if first_upper != "ANY" {
+                method = Some(first_upper);
             }
+            url_substring = self.expect_string()?.0;
+        } else {
+            url_substring = first;
         }
 
-        if *self.peek_kind() == TokenKind::LBrace {
-            self.bump();
-            while *self.peek_kind() != TokenKind::RBrace {
-                if *self.peek_kind() == TokenKind::Eof {
-                    return Err(self.err(self.peek_span(), "unclosed `mock` block"));
-                }
-                let (prop, prop_span) = self.expect_ident()?;
-                match prop.as_str() {
-                    "status" => {
+        if self.eat_kind(&TokenKind::Comma) {
+            if *self.peek_kind() == TokenKind::LBrace {
+                self.parse_mock_options_obj(&mut status, &mut headers, &mut patterns, &mut body)?;
+            } else {
+                // Shorthand file path: `mock("GET", "real_service", "mock.json"[, 201])`
+                let (rel_file, _) = self.expect_string()?;
+                body = Some(MockBodyAst::File(rel_file));
+                if self.eat_kind(&TokenKind::Comma) {
+                    if *self.peek_kind() == TokenKind::LBrace {
+                        self.parse_mock_options_obj(
+                            &mut status,
+                            &mut headers,
+                            &mut patterns,
+                            &mut body,
+                        )?;
+                    } else {
                         let (code, code_span) = self.expect_u64_int()?;
                         status = u16::try_from(code).map_err(|_| {
                             self.err(code_span, format!("invalid HTTP status code {code}"))
                         })?;
                     }
-                    "pattern" => {
-                        let (pat, _) = self.expect_string()?;
-                        patterns.push(pat);
-                    }
-                    "header" => {
-                        let (key, _) = self.expect_string()?;
-                        self.expect_kind(&TokenKind::Equals, "`=`")?;
-                        let (val, _) = self.expect_string()?;
-                        headers.insert(key, val);
-                    }
-                    "body" => {
-                        if self.eat_ident("file") {
-                            let (rel, _) = self.expect_string()?;
-                            body = Some(MockBodyAst::File(rel));
-                        } else {
-                            let (inline, _) = self.expect_string()?;
-                            body = Some(MockBodyAst::Inline(inline));
-                        }
-                    }
-                    other => {
-                        return Err(self.err(
-                            prop_span,
-                            format!(
-                                "unknown `mock` property `{other}` (use `status`, `pattern`, `header`, or `body`)"
-                            ),
-                        ));
-                    }
                 }
             }
-            self.bump(); // }
         }
 
+        self.expect_kind(&TokenKind::RParen, "`)`")?;
         Ok(Stmt::Mock(MockStmt {
             url_substring,
             method,
@@ -730,6 +1060,76 @@ impl<'a> Parser<'a> {
             body,
             span,
         }))
+    }
+
+    fn parse_mock_options_obj(
+        &mut self,
+        status: &mut u16,
+        headers: &mut HashMap<String, String>,
+        patterns: &mut Vec<String>,
+        body: &mut Option<MockBodyAst>,
+    ) -> Result<(), DslError> {
+        let obj = self.parse_json_value()?;
+        let Some(map) = obj.as_object() else {
+            return Err(self.err(self.peek_span(), "expected mock options `{ ... }` object"));
+        };
+        for (k, v) in map {
+            match k.as_str() {
+                "status" => {
+                    let code = v.as_u64().ok_or_else(|| {
+                        self.err(self.peek_span(), "mock `status` must be an integer")
+                    })?;
+                    *status = u16::try_from(code).map_err(|_| {
+                        self.err(self.peek_span(), format!("invalid HTTP status code {code}"))
+                    })?;
+                }
+                "pattern" => {
+                    if let Some(s) = v.as_str() {
+                        patterns.push(s.to_string());
+                    }
+                }
+                "patterns" => {
+                    if let Some(arr) = v.as_array() {
+                        for item in arr {
+                            if let Some(s) = item.as_str() {
+                                patterns.push(s.to_string());
+                            }
+                        }
+                    }
+                }
+                "headers" => {
+                    if let Some(hmap) = v.as_object() {
+                        for (hk, hv) in hmap {
+                            if let Some(hs) = hv.as_str() {
+                                headers.insert(hk.clone(), hs.to_string());
+                            }
+                        }
+                    }
+                }
+                "body" => {
+                    if let Some(s) = v.as_str() {
+                        *body = Some(MockBodyAst::Inline(s.to_string()));
+                    } else {
+                        *body = Some(MockBodyAst::Inline(v.to_string()));
+                    }
+                }
+                "bodyFile" | "file" => {
+                    let rel = v.as_str().ok_or_else(|| {
+                        self.err(self.peek_span(), "mock `file`/`bodyFile` must be a string path")
+                    })?;
+                    *body = Some(MockBodyAst::File(rel.to_string()));
+                }
+                other => {
+                    return Err(self.err(
+                        self.peek_span(),
+                        format!(
+                            "unknown mock option `{other}` (use `status`, `pattern`, `patterns`, `headers`, `body`, or `file`)"
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     fn parse_json_value(&mut self) -> Result<Value, DslError> {
@@ -756,9 +1156,7 @@ impl<'a> Parser<'a> {
                     self.expect_kind(&TokenKind::Colon, "`:`")?;
                     let val = self.parse_json_value()?;
                     map.insert(key, val);
-                    if *self.peek_kind() == TokenKind::Comma {
-                        self.bump();
-                    } else {
+                    if !self.eat_kind(&TokenKind::Comma) {
                         break;
                     }
                 }
@@ -772,9 +1170,7 @@ impl<'a> Parser<'a> {
                         return Err(self.err(self.peek_span(), "unclosed JSON `[` array"));
                     }
                     arr.push(self.parse_json_value()?);
-                    if *self.peek_kind() == TokenKind::Comma {
-                        self.bump();
-                    } else {
+                    if !self.eat_kind(&TokenKind::Comma) {
                         break;
                     }
                 }

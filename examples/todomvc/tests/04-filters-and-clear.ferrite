@@ -1,44 +1,44 @@
-suite "todomvc-04-filters-and-clear"
-import "./helpers/todomvc.ferrite"
+suite("todomvc-04-filters-and-clear");
+import "./helpers/todomvc.ferrite";
 
 beforeEach {
-  use open_clean_app()
-  use add_todo("Active One")
-  use add_todo("Completed One")
-  use add_todo("Active Two")
-  use toggle_second_todo()
-  expect count css ".todo-list li" 3
-  expect count css ".todo-list li.completed" 1
-  expect visible "2 items left"
+  await open_clean_app();
+  await add_todo("Active One");
+  await add_todo("Completed One");
+  await add_todo("Active Two");
+  await toggle_second_todo();
+  await $(".todo-list li").expect().count(3);
+  await $(".todo-list li.completed").expect().count(1);
+  await $text("2 items left").expect().visible();
 }
 
-test "filter-active-completed-and-all-routes" {
-  click css ".filters a[href=\"#/active\"]" timeout 5s
-  expect count css ".todo-list li" 2
-  expect visible "Active One"
-  expect visible "Active Two"
-  expect hidden "Completed One"
+test("filter-active-completed-and-all-routes") {
+  await $('.filters a[href="#/active"]').click();
+  await $(".todo-list li").expect().count(2);
+  await $text("Active One").expect().visible();
+  await $text("Active Two").expect().visible();
+  await $text("Completed One").expect().hidden();
 
-  click css ".filters a[href=\"#/completed\"]" timeout 5s
-  expect count css ".todo-list li" 1
-  expect visible "Completed One"
-  expect hidden "Active One"
-  expect hidden "Active Two"
+  await $('.filters a[href="#/completed"]').click();
+  await $(".todo-list li").expect().count(1);
+  await $text("Completed One").expect().visible();
+  await $text("Active One").expect().hidden();
+  await $text("Active Two").expect().hidden();
 
-  click css ".filters a[href=\"#/\"]" timeout 5s
-  expect count css ".todo-list li" 3
-  expect visible "Active One"
-  expect visible "Completed One"
-  expect visible "Active Two"
+  await $('.filters a[href="#/"]').click();
+  await $(".todo-list li").expect().count(3);
+  await $text("Active One").expect().visible();
+  await $text("Completed One").expect().visible();
+  await $text("Active Two").expect().visible();
 }
 
-test "clear-completed-removes-only-finished-todos" {
-  click css ".clear-completed" timeout 5s
-  expect count css ".todo-list li" 2
-  expect count css ".todo-list li.completed" 0
-  expect hidden "Completed One"
-  expect hidden css ".clear-completed"
-  expect visible "Active One"
-  expect visible "Active Two"
-  expect visible "2 items left"
+test("clear-completed-removes-only-finished-todos") {
+  await $(".clear-completed").click();
+  await $(".todo-list li").expect().count(2);
+  await $(".todo-list li.completed").expect().count(0);
+  await $text("Completed One").expect().hidden();
+  await $(".clear-completed").expect().hidden();
+  await $text("Active One").expect().visible();
+  await $text("Active Two").expect().visible();
+  await $text("2 items left").expect().visible();
 }

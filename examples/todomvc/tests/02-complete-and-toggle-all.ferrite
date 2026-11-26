@@ -1,43 +1,43 @@
-suite "todomvc-02-complete-and-toggle-all"
-import "./helpers/todomvc.ferrite"
+suite("todomvc-02-complete-and-toggle-all");
+import "./helpers/todomvc.ferrite";
 
 beforeEach {
-  use open_clean_app()
+  await open_clean_app();
 }
 
-test "toggle-single-todo-complete-and-back" {
-  use add_todo("Task One")
-  use add_todo("Task Two")
-  expect count css ".todo-list li" 2
-  expect count css ".todo-list li.completed" 0
-  expect visible "2 items left"
+test("toggle-single-todo-complete-and-back") {
+  await add_todo("Task One");
+  await add_todo("Task Two");
+  await $(".todo-list li").expect().count(2);
+  await $(".todo-list li.completed").expect().count(0);
+  await $text("2 items left").expect().visible();
 
-  use toggle_first_todo()
-  expect count css ".todo-list li.completed" 1
-  expect visible "1 item left"
-  expect visible css ".clear-completed"
+  await toggle_first_todo();
+  await $(".todo-list li.completed").expect().count(1);
+  await $text("1 item left").expect().visible();
+  await $(".clear-completed").expect().visible();
 
   // Uncheck back to active
-  use toggle_first_todo()
-  expect count css ".todo-list li.completed" 0
-  expect visible "2 items left"
-  expect hidden css ".clear-completed"
+  await toggle_first_todo();
+  await $(".todo-list li.completed").expect().count(0);
+  await $text("2 items left").expect().visible();
+  await $(".clear-completed").expect().hidden();
 }
 
-test "toggle-all-complete-and-uncomplete" {
-  use add_todo("Alpha")
-  use add_todo("Beta")
-  use add_todo("Gamma")
-  expect count css ".todo-list li" 3
-  expect visible "3 items left"
+test("toggle-all-complete-and-uncomplete") {
+  await add_todo("Alpha");
+  await add_todo("Beta");
+  await add_todo("Gamma");
+  await $(".todo-list li").expect().count(3);
+  await $text("3 items left").expect().visible();
 
-  use toggle_all()
-  expect count css ".todo-list li.completed" 3
-  expect visible "0 items left"
-  expect visible css ".clear-completed"
+  await toggle_all();
+  await $(".todo-list li.completed").expect().count(3);
+  await $text("0 items left").expect().visible();
+  await $(".clear-completed").expect().visible();
 
-  use toggle_all()
-  expect count css ".todo-list li.completed" 0
-  expect visible "3 items left"
-  expect hidden css ".clear-completed"
+  await toggle_all();
+  await $(".todo-list li.completed").expect().count(0);
+  await $text("3 items left").expect().visible();
+  await $(".clear-completed").expect().hidden();
 }

@@ -2,20 +2,20 @@
   "Suite Header": {
     "prefix": "suite",
     "body": [
-      "suite \"${1:my-e2e-suite}\"",
+      "suite(\"${1:my-e2e-suite}\");",
       "",
-      "test \"${2:happy-path}\" {",
-      "  goto \"${3:https://example.com}\" wait load timeout 15s",
-      "  snapshot interactive",
+      "test(\"${2:happy-path}\") {",
+      "  await goto(\"${3:https://example.com}\");",
+      "  await $(\"${4:#app}\").expect().visible();",
       "  $0",
       "}"
     ],
-    "description": "Create a .ferrite E2E suite skeleton"
+    "description": "Create a jQuery-style .ferrite E2E suite skeleton"
   },
   "Test Block": {
     "prefix": "test",
     "body": [
-      "test \"${1:test-case-name}\" {",
+      "test(\"${1:test-case-name}\") {",
       "  $0",
       "}"
     ],
@@ -30,37 +30,52 @@
     ],
     "description": "Define a reusable .ferrite macro"
   },
-  "Mock Route Inline": {
-    "prefix": "mock",
+  "jQuery Click": {
+    "prefix": "$click",
     "body": [
-      "mock \"${1:/api/endpoint}\" status ${2:200} pattern \"${3:*://example.com/*}\" {",
-      "  header \"content-type\" = \"application/json\"",
-      "  body \"${4:{\\\"ok\\\":true}}\"",
-      "}"
+      "await $(\"${1:.btn:eq(0)}\").click();"
     ],
-    "description": "Intercept and mock an HTTP route via CDP Fetch"
+    "description": "Select with CSS and click"
   },
-  "Mock Route File": {
-    "prefix": "mock-file",
+  "jQuery Fill + Enter": {
+    "prefix": "$fill",
     "body": [
-      "mock \"${1:/login}\" status ${2:200} pattern \"${3:*://example.com/*}\" {",
-      "  header \"content-type\" = \"text/html; charset=utf-8\"",
-      "  body file \"${4:./fixtures/page.html}\"",
-      "}"
+      "await $(\"${1:input}\").fill(\"${2:value}\").press(\"Enter\");"
     ],
-    "description": "Mock an HTTP route using a fixture file on disk"
+    "description": "Select input, fill value, and press Enter"
   },
   "Expect Visible": {
-    "prefix": "expect-vis",
+    "prefix": "$visible",
     "body": [
-      "expect visible \"${1:Dashboard Ready}\" timeout ${2:5s}"
+      "await $(\"${1:.selector}\").expect().visible();"
     ],
-    "description": "Assert text is visible in the Accessibility Tree"
+    "description": "Select element and assert it is visible"
   },
-  "Expect Screenshot": {
-    "prefix": "expect-ss",
+  "Expect Count": {
+    "prefix": "$count",
     "body": [
-      "expect screenshot \"${1:screen-name}\" threshold ${2:0.1} maxDiff ${3:0.001}"
+      "await $(\"${1:.item}\").expect().count(${2:1});"
+    ],
+    "description": "Select elements and assert match count"
+  },
+  "Mock Route File": {
+    "prefix": "mock",
+    "body": [
+      "await mock(\"${1:GET}\", \"${2:real_service}\", \"${3:mock.json}\");"
+    ],
+    "description": "Intercept and mock an HTTP route using a fixture file"
+  },
+  "Sleep": {
+    "prefix": "sleep",
+    "body": [
+      "await sleep(${1:1s});"
+    ],
+    "description": "Wait for a duration"
+  },
+  "Screenshot Assertion": {
+    "prefix": "screenshot",
+    "body": [
+      "await screenshot(\"${1:screen-name}\", ${2:0.1}, ${3:0.005});"
     ],
     "description": "Assert pixelmatch visual regression baseline"
   }

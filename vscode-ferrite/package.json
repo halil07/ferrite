@@ -1,8 +1,8 @@
 {
   "name": "ferrite-lang",
   "displayName": "Ferrite E2E (.ferrite)",
-  "description": "Syntax highlighting, bracket matching, and snippets for .ferrite E2E test files.",
-  "version": "0.1.0",
+  "description": "Syntax highlighting, context-aware IntelliSense autocomplete (.expect() / jQuery chains), bracket matching, and snippets for .ferrite E2E test files.",
+  "version": "0.2.0",
   "publisher": "ferrite-e2e",
   "license": "MIT",
   "engines": {
@@ -12,6 +12,10 @@
     "Programming Languages",
     "Testing"
   ],
+  "activationEvents": [
+    "onLanguage:ferrite"
+  ],
+  "main": "./extension.js",
   "contributes": {
     "languages": [
       {

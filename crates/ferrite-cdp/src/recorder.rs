@@ -185,7 +185,7 @@ pub fn compress_recorded_actions(raw: &[RecordedAction]) -> Vec<RecordedAction> 
     out
 }
 
-/// Renders recorded actions as clean, idiomatic `.ferrite` DSL source code.
+/// Renders recorded actions as clean, idiomatic jQuery-fluent `.ferrite` DSL source code.
 pub fn render_ferrite_script(
     suite_name: &str,
     case_name: &str,
@@ -193,44 +193,46 @@ pub fn render_ferrite_script(
 ) -> String {
     let mut lines = vec![
         "// Recorded by Ferrite E2E Action Recorder".to_string(),
-        format!("suite {}", quote(suite_name)),
+        format!("suite({});", quote(suite_name)),
         String::new(),
-        format!("test {} {{", quote(case_name)),
+        format!("test({}) {{", quote(case_name)),
     ];
 
     for action in actions {
         match action {
             RecordedAction::Navigate { url } => {
-                lines.push(format!("  goto {} wait load timeout 15s", quote(url)));
+                lines.push(format!("  await goto({}, \"load\", 15s);", quote(url)));
             }
-            RecordedAction::ClickRole { role, name } => match name.as_deref().filter(|s| !s.is_empty()) {
-                Some(n) => lines.push(format!(
-                    "  click role {} {} exact timeout 5s",
-                    quote(role),
-                    quote(n)
-                )),
-                None => lines.push(format!("  click role {} timeout 5s", quote(role))),
-            },
+            RecordedAction::ClickRole { role, name } => {
+                match name.as_deref().filter(|s| !s.is_empty()) {
+                    Some(n) => lines.push(format!(
+                        "  await $role({}, {}).exact().click();",
+                        quote(role),
+                        quote(n)
+                    )),
+                    None => lines.push(format!("  await $role({}).click();", quote(role))),
+                }
+            }
             RecordedAction::FillRole { role, name, value } => {
                 match name.as_deref().filter(|s| !s.is_empty()) {
                     Some(n) => lines.push(format!(
-                        "  fill role {} {} {} timeout 5s",
+                        "  await $role({}, {}).fill({});",
                         quote(role),
                         quote(n),
                         quote(value)
                     )),
                     None => lines.push(format!(
-                        "  fill role {} {} timeout 5s",
+                        "  await $role({}).fill({});",
                         quote(role),
                         quote(value)
                     )),
                 }
             }
             RecordedAction::DblclickText { text } => {
-                lines.push(format!("  dblclick text {} timeout 5s", quote(text)));
+                lines.push(format!("  await $text({}).dblclick();", quote(text)));
             }
             RecordedAction::PressKey { key } => {
-                lines.push(format!("  press {}", quote(key)));
+                lines.push(format!("  await press({});", quote(key)));
             }
         }
     }
@@ -477,8 +479,8 @@ mod tests {
         let compressed = compress_recorded_actions(&raw);
         assert_eq!(compressed.len(), 3);
         let dsl = render_ferrite_script("recorded-suite", "recorded-flow", &compressed);
-        assert!(dsl.contains("suite \"recorded-suite\""));
-        assert!(dsl.contains("fill role \"textbox\" \"New Todo Input\" \"Buy \\$5 milk\""));
-        assert!(dsl.contains("press \"Enter\""));
+        assert!(dsl.contains("suite(\"recorded-suite\");"));
+        assert!(dsl.contains("await $role(\"textbox\", \"New Todo Input\").fill(\"Buy \\$5 milk\");"));
+        assert!(dsl.contains("await press(\"Enter\");"));
     }
 }

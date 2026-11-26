@@ -1,44 +1,44 @@
-suite "todomvc-01-initial-and-create"
-import "./helpers/todomvc.ferrite"
+suite("todomvc-01-initial-and-create");
+import "./helpers/todomvc.ferrite";
 
 beforeEach {
-  use open_clean_app()
-  console start
-  console clear
+  await open_clean_app();
+  await console.start();
+  await console.clear();
 }
 
-test "initial-empty-state" {
-  expect visible css "header.header h1"
-  expect visible css "input.new-todo"
-  expect count css ".todo-list li" 0
-  expect hidden css ".footer"
-  expect noConsoleErrors
+test("initial-empty-state") {
+  await $("header.header h1").expect().visible();
+  await $("input.new-todo").expect().visible();
+  await $(".todo-list li").expect().count(0);
+  await $(".footer").expect().hidden();
+  await console.noErrors();
 }
 
-test "create-single-and-multiple-todos" {
-  use add_todo("Buy milk")
-  expect count css ".todo-list li" 1
-  expect visible css ".footer"
-  expect visible "Buy milk"
-  expect visible "1 item left"
+test("create-single-and-multiple-todos") {
+  await add_todo("Buy milk");
+  await $(".todo-list li").expect().count(1);
+  await $(".footer").expect().visible();
+  await $text("Buy milk").expect().visible();
+  await $text("1 item left").expect().visible();
 
-  use add_todo("Walk the dog")
-  use add_todo("Read Rust book")
-  expect count css ".todo-list li" 3
-  expect visible "Walk the dog"
-  expect visible "Read Rust book"
-  expect visible "3 items left"
-  expect noConsoleErrors
+  await add_todo("Walk the dog");
+  await add_todo("Read Rust book");
+  await $(".todo-list li").expect().count(3);
+  await $text("Walk the dog").expect().visible();
+  await $text("Read Rust book").expect().visible();
+  await $text("3 items left").expect().visible();
+  await console.noErrors();
 }
 
-test "trim-whitespace-and-ignore-empty-inputs" {
+test("trim-whitespace-and-ignore-empty-inputs") {
   // Whitespace-only inputs are ignored by React TodoMVC
-  use add_todo("   ")
-  expect count css ".todo-list li" 0
-  expect hidden css ".footer"
+  await add_todo("   ");
+  await $(".todo-list li").expect().count(0);
+  await $(".footer").expect().hidden();
 
-  use add_todo("   Learn Ferrite   ")
-  expect count css ".todo-list li" 1
-  expect visible "Learn Ferrite" exact
-  expect visible "1 item left"
+  await add_todo("   Learn Ferrite   ");
+  await $(".todo-list li").expect().count(1);
+  await $text("Learn Ferrite").exact().expect().visible();
+  await $text("1 item left").expect().visible();
 }

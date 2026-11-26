@@ -5,13 +5,13 @@
   "patterns": [
     { "include": "#comments" },
     { "include": "#strings" },
+    { "include": "#selectors" },
     { "include": "#refs" },
     { "include": "#durations" },
     { "include": "#numbers" },
     { "include": "#keywords" },
-    { "include": "#actions" },
-    { "include": "#assertions" },
-    { "include": "#modifiers" },
+    { "include": "#methods" },
+    { "include": "#builtins" },
     { "include": "#constants" },
     { "include": "#macro-call" },
     { "include": "#punctuation" }
@@ -53,6 +53,15 @@
             { "include": "#string-interpolation" },
             { "include": "#string-escapes" }
           ]
+        },
+        {
+          "name": "string.quoted.single.ferrite",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            { "include": "#string-interpolation" },
+            { "include": "#string-escapes" }
+          ]
         }
       ]
     },
@@ -60,7 +69,7 @@
       "patterns": [
         {
           "name": "constant.character.escape.ferrite",
-          "match": "\\\\([\"\\\\nrt$])"
+          "match": "\\\\([\"'\\\\nrt$])"
         }
       ]
     },
@@ -82,6 +91,14 @@
               "match": "[A-Za-z_][A-Za-z0-9_]*"
             }
           ]
+        }
+      ]
+    },
+    "selectors": {
+      "patterns": [
+        {
+          "name": "support.class.selector.ferrite",
+          "match": "\\$(text|role)?(?=\\s*\\()"
         }
       ]
     },
@@ -117,31 +134,23 @@
       "patterns": [
         {
           "name": "keyword.control.ferrite",
-          "match": "\\b(suite|import|beforeEach|macro|test|let|use)\\b"
+          "match": "\\b(suite|import|beforeEach|macro|fn|function|test|let|const|await|use)\\b"
         }
       ]
     },
-    "actions": {
+    "methods": {
       "patterns": [
         {
-          "name": "support.function.action.ferrite",
-          "match": "\\b(goto|snapshot|click|dblclick|hover|fill|press|type|reload|console|wait|mock|cdp|tab)\\b"
+          "name": "entity.name.function.method.ferrite",
+          "match": "(?<=\\.)(eq|nth|first|exact|timeout|click|dblclick|hover|fill|val|press|type|sleep|wait|visible|hidden|count|shouldBeVisible|shouldBeHidden|shouldHaveCount|isVisible|isHidden|start|clear|noErrors|no_errors|expect)(?=\\s*\\()"
         }
       ]
     },
-    "assertions": {
+    "builtins": {
       "patterns": [
         {
-          "name": "keyword.other.assertion.ferrite",
-          "match": "\\b(expect|visible|hidden|count|screenshot|noConsoleErrors|no_console_errors)\\b"
-        }
-      ]
-    },
-    "modifiers": {
-      "patterns": [
-        {
-          "name": "storage.modifier.ferrite",
-          "match": "\\b(role|css|selector|text|nth|exact|interactive|full|timeout|threshold|maxDiff|max_diff|status|pattern|header|body|file|load|domcontentloaded|commit|ignoreCache|ignore_cache|start|clear|level|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|ANY)\\b"
+          "name": "support.function.builtin.ferrite",
+          "match": "\\b(goto|sleep|wait|reload|press|type|snapshot|screenshot|console|mock|cdp|tab)\\b"
         }
       ]
     },
@@ -169,7 +178,7 @@
         },
         {
           "name": "keyword.operator.assignment.ferrite",
-          "match": "[=,:]"
+          "match": "[=,.;:]"
         }
       ]
     }

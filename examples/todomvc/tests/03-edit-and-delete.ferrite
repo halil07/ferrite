@@ -1,46 +1,46 @@
-suite "todomvc-03-edit-and-delete"
-import "./helpers/todomvc.ferrite"
+suite("todomvc-03-edit-and-delete");
+import "./helpers/todomvc.ferrite";
 
 beforeEach {
-  use open_clean_app()
+  await open_clean_app();
 }
 
-test "edit-todo-on-double-click-and-enter" {
-  use add_todo("Write unit tests")
-  expect count css ".todo-list li" 1
-  expect visible "Write unit tests"
+test("edit-todo-on-double-click-and-enter") {
+  await add_todo("Write unit tests");
+  await $(".todo-list li").expect().count(1);
+  await $text("Write unit tests").expect().visible();
 
-  use edit_first_todo("Write E2E tests")
-  expect count css ".todo-list li" 1
-  expect visible "Write E2E tests"
-  expect hidden "Write unit tests"
-  expect visible "1 item left"
+  await edit_first_todo("Write E2E tests");
+  await $(".todo-list li").expect().count(1);
+  await $text("Write E2E tests").expect().visible();
+  await $text("Write unit tests").expect().hidden();
+  await $text("1 item left").expect().visible();
 }
 
-test "commit-edit-on-blur-saves-updated-title" {
-  use add_todo("Keep original title")
-  use edit_first_todo_on_blur("Saved on blur")
+test("commit-edit-on-blur-saves-updated-title") {
+  await add_todo("Keep original title");
+  await edit_first_todo_on_blur("Saved on blur");
 
-  expect count css ".todo-list li" 1
-  expect hidden css ".todo-list li.editing"
-  expect visible "Saved on blur"
-  expect hidden "Keep original title"
+  await $(".todo-list li").expect().count(1);
+  await $(".todo-list li.editing").expect().hidden();
+  await $text("Saved on blur").expect().visible();
+  await $text("Keep original title").expect().hidden();
 }
 
-test "delete-todo-via-hover-destroy-button" {
-  use add_todo("First task")
-  use add_todo("Second task")
-  expect count css ".todo-list li" 2
-  expect visible "2 items left"
+test("delete-todo-via-hover-destroy-button") {
+  await add_todo("First task");
+  await add_todo("Second task");
+  await $(".todo-list li").expect().count(2);
+  await $text("2 items left").expect().visible();
 
-  use delete_first_todo()
-  expect count css ".todo-list li" 1
-  expect hidden "First task"
-  expect visible "Second task"
-  expect visible "1 item left"
+  await delete_first_todo();
+  await $(".todo-list li").expect().count(1);
+  await $text("First task").expect().hidden();
+  await $text("Second task").expect().visible();
+  await $text("1 item left").expect().visible();
 
-  use delete_first_todo()
-  expect count css ".todo-list li" 0
-  expect hidden "Second task"
-  expect hidden css ".footer"
+  await delete_first_todo();
+  await $(".todo-list li").expect().count(0);
+  await $text("Second task").expect().hidden();
+  await $(".footer").expect().hidden();
 }

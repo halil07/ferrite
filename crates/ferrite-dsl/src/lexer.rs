@@ -22,6 +22,8 @@ pub enum TokenKind {
     RBracket,
     Colon,
     Comma,
+    Dot,
+    Semicolon,
     Equals,
     Eof,
 }
@@ -179,6 +181,14 @@ impl<'a> Lexer<'a> {
                     self.bump();
                     TokenKind::Comma
                 }
+                '.' => {
+                    self.bump();
+                    TokenKind::Dot
+                }
+                ';' => {
+                    self.bump();
+                    TokenKind::Semicolon
+                }
                 '=' => {
                     self.bump();
                     TokenKind::Equals
@@ -187,9 +197,10 @@ impl<'a> Lexer<'a> {
                     if self.starts_with("\"\"\"") {
                         TokenKind::Str(self.lex_triple_string(span)?)
                     } else {
-                        TokenKind::Str(self.lex_string(span)?)
+                        TokenKind::Str(self.lex_string(span, '"')?)
                     }
                 }
+                '\'' => TokenKind::Str(self.lex_string(span, '\'')?),
                 '@' => TokenKind::Ref(self.lex_ref(span)?),
                 '-' | '0'..='9' => self.lex_number_or_duration(span)?,
                 c if is_ident_start(c) => TokenKind::Ident(self.lex_ident()),
@@ -203,12 +214,12 @@ impl<'a> Lexer<'a> {
         Ok(tokens)
     }
 
-    fn lex_string(&mut self, start_span: Span) -> Result<String, DslError> {
-        self.bump(); // opening "
+    fn lex_string(&mut self, start_span: Span, quote: char) -> Result<String, DslError> {
+        self.bump(); // opening quote (" or ')
         let mut out = String::new();
         while let Some(ch) = self.bump() {
             match ch {
-                '"' => return Ok(out),
+                c if c == quote => return Ok(out),
                 '\n' => {
                     return Err(self.err(
                         start_span,
@@ -222,6 +233,7 @@ impl<'a> Lexer<'a> {
                     };
                     match esc {
                         '"' => out.push('"'),
+                        '\'' => out.push('\''),
                         '\\' => out.push('\\'),
                         'n' => out.push('\n'),
                         'r' => out.push('\r'),
@@ -391,11 +403,11 @@ impl<'a> Lexer<'a> {
 }
 
 fn is_ident_start(c: char) -> bool {
-    c.is_ascii_alphabetic() || c == '_'
+    c.is_ascii_alphabetic() || c == '_' || c == '$'
 }
 
 fn is_ident_continue(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_'
+    c.is_ascii_alphanumeric() || c == '_' || c == '$'
 }
 
 fn dedent_multiline(raw: &str) -> String {
@@ -428,25 +440,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lexes_comments_refs_durations_and_multiline_strings() {
-        let src = r#"
+    fn lexes_comments_refs_durations_jquery_and_strings() {
+        let src = r##"
             // single-line comment
             # hash comment
             /* block
                comment */
-            click @e12
-            wait 250ms
-            goto "https://example.com" timeout 15s
-            mock "/login" {
-                body """
+            await $(".todo-list li label:eq(0)").dblclick();
+            await $('.filters a[href="#/active"]').click()
+            await $(@e12).click()
+            sleep(250ms)
+            goto("https://example.com", "load", 15s)
+            mock("GET", "/login", {
+                body: """
                     <h1>Hello</h1>
                 """
-            }
-        "#;
+            })
+        "##;
         let tokens = tokenize("test.ferrite", src).unwrap();
+        assert!(tokens.iter().any(|t| t.kind == TokenKind::Ident("$".into())));
+        assert!(tokens.iter().any(|t| t.kind == TokenKind::Dot));
+        assert!(tokens.iter().any(|t| t.kind == TokenKind::Semicolon));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Ref("e12".into())));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::DurationMs(250)));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::DurationMs(15_000)));
+        assert!(tokens.iter().any(|t| t.kind == TokenKind::Str(".filters a[href=\"#/active\"]".into())));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Str("<h1>Hello</h1>".into())));
     }
 }
