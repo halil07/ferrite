@@ -198,7 +198,7 @@ npx ferrite record --url https://todomvc.com/examples/react/dist/ --out tests/re
 | `npx ferrite init [dir]` | Scaffold a new `.ferrite` project (`ferrite.toml`, helpers, fixtures, starter test) |
 | `npx ferrite check [path]` | Parse, validate, and type-check `.ferrite` suites without opening a browser |
 | `npx ferrite compile [path]` | Compile `.ferrite` files into JSON `TestSuite` IR |
-| `npx ferrite run [path]` | Execute `.ferrite` suites in live Chrome (`--update-baselines`, `--json`, `--snapshots-dir`) |
+| `npx ferrite run [path]` | Execute `.ferrite` suites in live Chrome or headless (`--headless`, `--chrome-path`, `--update-baselines`, `--json`, `--snapshots-dir`) |
 | `npx ferrite record` | Record live Chrome interactions into a `.ferrite` file |
 | `npx ferrite setup --extension-id <ID>` | Register Chrome/Edge/Brave/Chromium Native Messaging host |
 | `npx ferrite mcp` | Start the stdio MCP (JSON-RPC 2.0) server for AI agents |

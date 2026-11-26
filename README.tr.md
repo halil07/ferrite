@@ -198,7 +198,7 @@ npx ferrite record --url https://todomvc.com/examples/react/dist/ --out tests/re
 | `npx ferrite init [klasör]` | Yeni `.ferrite` projesi oluşturur (`ferrite.toml`, helper, fixture, örnek test) |
 | `npx ferrite check [yol]` | Tarayıcı açmadan `.ferrite` dosyalarını sözdizimi ve kural açısından doğrular |
 | `npx ferrite compile [yol]` | `.ferrite` dosyalarını JSON `TestSuite` çıktısına derler |
-| `npx ferrite run [yol]` | Testleri canlı Chrome'da çalıştırır (`--update-baselines`, `--json`, `--snapshots-dir`) |
+| `npx ferrite run [yol]` | Testleri canlı Chrome'da veya headless çalıştırır (`--headless`, `--chrome-path`, `--update-baselines`, `--json`, `--snapshots-dir`) |
 | `npx ferrite record` | Canlı Chrome etkileşimlerini `.ferrite` dosyasına kaydeder |
 | `npx ferrite setup --extension-id <ID>` | Chrome/Edge/Brave/Chromium Native Messaging kaydını yapar |
 | `npx ferrite mcp` | Yapay zeka ajanları için stdio MCP (JSON-RPC 2.0) sunucusunu başlatır |

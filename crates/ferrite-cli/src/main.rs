@@ -10,9 +10,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 use ferrite_cdp::MockCdpTransport;
 use ferrite_core::NATIVE_HOST_NAME;
 use ferrite_daemon::{
-    ConnectionInfo, E2eSession, SuiteReport, WsServer, default_connection_file,
-    default_snapshots_dir, generate_session_token, read_connection_file,
-    run_suite_over_ws_with_snapshots, send_ws_rpc, write_connection_file,
+    ConnectionInfo, E2eSession, HeadlessCdpTransport, HeadlessOptions, SuiteReport, WsServer,
+    default_connection_file, default_snapshots_dir, generate_session_token, read_connection_file,
+    run_suite, run_suite_over_ws_with_snapshots, send_ws_rpc, write_connection_file,
 };
 use ferrite_dsl::{compile_path, default_project_scaffold, load_project_config};
 use ferrite_ipc::{NativeBridgeClient, StdioBridge};
@@ -105,6 +105,14 @@ enum Command {
         /// Output the full machine-readable JSON test report instead of the human summary.
         #[arg(long, default_value_t = false)]
         json: bool,
+
+        /// Launch an isolated headless Chrome/Chromium/Edge browser directly (no extension or visible window required).
+        #[arg(long, default_value_t = false)]
+        headless: bool,
+
+        /// Optional explicit path to Chrome/Chromium/Edge binary when running with --headless.
+        #[arg(long)]
+        chrome_path: Option<PathBuf>,
     },
 
     /// Record live user interactions in Chrome and generate a `.ferrite` test file.
@@ -222,6 +230,8 @@ async fn main() -> anyhow::Result<()> {
             update_baselines,
             snapshots_dir,
             json: json_output,
+            headless,
+            chrome_path,
         } => {
             init_stderr_tracing();
             run_test_suites(
@@ -231,6 +241,8 @@ async fn main() -> anyhow::Result<()> {
                 update_baselines,
                 snapshots_dir,
                 json_output,
+                headless,
+                chrome_path,
             )
             .await
         }
@@ -493,6 +505,8 @@ async fn run_test_suites(
     update_baselines: bool,
     snapshots_dir: Option<PathBuf>,
     json_output: bool,
+    headless: bool,
+    chrome_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     let compiled = compile_path(&path)?;
     if compiled.is_empty() {
@@ -507,26 +521,43 @@ async fn run_test_suites(
         },
     };
 
-    let (resolved_url, resolved_token) = resolve_daemon_connection(ws_url, token)?;
-
     let mut reports: Vec<SuiteReport> = Vec::with_capacity(compiled.len());
-    for (_, suite) in compiled {
-        let report = run_suite_over_ws_with_snapshots(
-            &resolved_url,
-            &resolved_token,
-            &suite,
-            update_baselines,
-            Some(&resolved_snapshots),
-        )
-        .await
-        .map_err(|err| {
-            anyhow::anyhow!(
-                "failed executing suite {:?} against {resolved_url}: {err}\n\
-                 Hint: verify the Ferrite Chrome extension shows 'Connected' (click Reconnect Native Host in the popup if needed).",
-                suite.name
+    if headless {
+        let transport = HeadlessCdpTransport::launch(HeadlessOptions {
+            chrome_path,
+            ..Default::default()
+        })
+        .await?;
+        let session = E2eSession::new(transport.clone(), &resolved_snapshots);
+
+        for (_, suite) in compiled {
+            let report = run_suite(&session, &suite, update_baselines).await;
+            reports.push(report);
+        }
+
+        transport.shutdown().await;
+    } else {
+        let (resolved_url, resolved_token) = resolve_daemon_connection(ws_url, token)?;
+
+        for (_, suite) in compiled {
+            let report = run_suite_over_ws_with_snapshots(
+                &resolved_url,
+                &resolved_token,
+                &suite,
+                update_baselines,
+                Some(&resolved_snapshots),
             )
-        })?;
-        reports.push(report);
+            .await
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "failed executing suite {:?} against {resolved_url}: {err}\n\
+                     Hint: verify the Ferrite Chrome extension shows 'Connected' (click Reconnect Native Host in the popup if needed), \
+                     or pass `--headless` to run without the extension.",
+                    suite.name
+                )
+            })?;
+            reports.push(report);
+        }
     }
 
     let all_passed = reports.iter().all(|r| r.passed);
