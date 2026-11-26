@@ -188,11 +188,19 @@ pub enum TestStep {
         url_substring: String,
         #[serde(default)]
         method: Option<String>,
+        #[serde(default)]
+        params: HashMap<String, String>,
+        #[serde(default)]
+        data: Option<Value>,
         status: u16,
         #[serde(default)]
         headers: HashMap<String, String>,
         #[serde(default)]
         body: String,
+        #[serde(default)]
+        delay_ms: u64,
+        #[serde(default)]
+        fail_reason: Option<String>,
         #[serde(default)]
         patterns: Vec<String>,
     },
@@ -477,9 +485,13 @@ fn step_to_rpc(
         TestStep::MockRoute {
             url_substring,
             method,
+            params,
+            data,
             status,
             headers,
             body,
+            delay_ms,
+            fail_reason,
             patterns,
         } => (
             "intercept_network".to_string(),
@@ -488,10 +500,13 @@ fn step_to_rpc(
                 "route": MockRouteResponse {
                     url_substring: url_substring.clone(),
                     method: method.clone(),
+                    params: params.clone(),
+                    data: data.clone(),
                     status: *status,
                     headers: headers.clone(),
                     body: body.clone(),
-                    fail_reason: None,
+                    delay_ms: *delay_ms,
+                    fail_reason: fail_reason.clone(),
                 },
                 "patterns": patterns,
             }),

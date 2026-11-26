@@ -142,7 +142,7 @@
       "patterns": [
         {
           "name": "entity.name.function.method.ferrite",
-          "match": "(?<=\\.)(eq|nth|first|exact|timeout|click|dblclick|hover|fill|val|press|type|sleep|wait|visible|hidden|count|shouldBeVisible|shouldBeHidden|shouldHaveCount|isVisible|isHidden|start|clear|noErrors|no_errors|expect)(?=\\s*\\()"
+          "match": "(?<=\\.)(eq|nth|first|exact|timeout|click|dblclick|hover|fill|val|press|type|sleep|wait|visible|hidden|count|shouldBeVisible|shouldBeHidden|shouldHaveCount|isVisible|isHidden|start|clear|noErrors|no_errors|expect|when|load|params|data|reply|replyJson|delay|header|headers|pattern|fail|abort)(?=\\s*\\()"
         }
       ]
     },

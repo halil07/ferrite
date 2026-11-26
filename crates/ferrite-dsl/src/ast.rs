@@ -44,10 +44,14 @@ pub enum MockBodyAst {
 pub struct MockStmt {
     pub url_substring: String,
     pub method: Option<String>,
+    pub params: HashMap<String, String>,
+    pub data: Option<Value>,
     pub status: u16,
     pub headers: HashMap<String, String>,
     pub patterns: Vec<String>,
     pub body: Option<MockBodyAst>,
+    pub delay_ms: u64,
+    pub fail_reason: Option<String>,
     pub span: Span,
 }
 
@@ -223,6 +227,10 @@ pub enum Stmt {
         span: Span,
     },
     Mock(MockStmt),
+    MockLoad {
+        file_path: String,
+        span: Span,
+    },
     MockClear {
         span: Span,
     },

@@ -139,22 +139,29 @@ Arayüz bilinçli olarak değiştiğinde baseline PNG'leri güncellemek için:
 npx ferrite run --update-baselines
 ```
 
-### Servis İsteklerini Manipüle Etme (`mock`)
+### Servis İsteklerini Manipüle Etme (`mock.when` ve `mock.load`)
 
-Tarayıcıdan çıkan HTTP/XHR/Fetch isteklerini yakalayıp yerel bir JSON dosyası veya özel yanıt döndürün:
+Tarayıcıdan çıkan HTTP/XHR/Fetch isteklerini `:param` yol parametresi, `params` ve JSON `data` alt küme (subset) eşleşmesi, gecikme (`delay`), ağ hatası simülasyonu ve **saf response JSON dosyalarıyla** manipüle edin:
 
 ```ferrite
-// Kısa yazım: mock("METOD", "url-parcasi", "dosya.json"[, durum_kodu])
-await mock("GET", "real_service", "mock.json");
-await mock("POST", "/api/orders", "./fixtures/order-created.json", 201);
+// Akıcı (fluent) kural (`:id` değeri `params`'tan alınır; kalanlar query alt kümesi olarak eşleşir)
+await mock.when("GET", "/api/users/:id/orders")
+  .params({ id: "42", page: "1" })
+  .reply(200, "./mocks/responses/orders.json")
+  .delay(300ms);
 
-// Detaylı nesne yazımı
-await mock("GET", "/api/session", {
-  status: 200,
-  pattern: "*://example.com/*",
-  headers: { "content-type": "application/json" },
-  body: "{\"authenticated\":true}"
-});
+// POST gövdesi alt küme eşleşmesi (timestamp vb. ek alanlar yok sayılır)
+await mock.when("POST", "/api/login")
+  .data({ email: "admin@test.com" })
+  .header("x-mock", "true")
+  .reply(200, "./mocks/responses/login-ok.json");
+
+// Ağ zaman aşımı veya kopma simülasyonu
+await mock.when("GET", "/api/health").delay(200ms).fail("TimedOut");
+await mock.when("GET", "/api/down").abort();
+
+// Büyük projeler için harici senaryo dosyasından (`*.mock.json`) toplu yükleme
+await mock.load("./mocks/checkout.mock.json");
 
 // Sekmedeki tüm mock'ları temizle
 await mock.clear();

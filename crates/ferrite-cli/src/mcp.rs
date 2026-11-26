@@ -685,6 +685,26 @@ impl McpServer {
                     .transpose()?
                     .unwrap_or_default();
 
+                let params_map: std::collections::HashMap<String, String> = args
+                    .get("params")
+                    .and_then(Value::as_object)
+                    .map(|m| {
+                        m.iter()
+                            .map(|(k, v)| {
+                                let s = match v {
+                                    Value::String(s) => s.clone(),
+                                    other => other.to_string(),
+                                };
+                                (k.clone(), s)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let data = args.get("data").cloned();
+                let delay_ms = args.get("delayMs").and_then(Value::as_u64).unwrap_or(0);
+                let fail_reason = args.get("fail").and_then(Value::as_str).map(str::to_string);
+
                 let res = self
                     .call_daemon(
                         "intercept_network",
@@ -693,9 +713,13 @@ impl McpServer {
                             "route": {
                                 "urlSubstring": url_substring,
                                 "method": method,
+                                "params": params_map,
+                                "data": data,
                                 "status": status,
                                 "headers": headers,
                                 "body": body,
+                                "delayMs": delay_ms,
+                                "failReason": fail_reason,
                             },
                             "patterns": patterns,
                         }),
@@ -1028,10 +1052,14 @@ fn tool_definitions() -> Value {
                     "tabId": { "type": "integer" },
                     "action": { "type": "string", "enum": ["add", "clear"], "description": "Add a mock route or clear all mocks on the tab (default: add)." },
                     "method": { "type": "string", "description": "Optional HTTP method filter: GET, POST, PUT, PATCH, DELETE." },
-                    "url": { "type": "string", "description": "URL substring to match (e.g. `real_service` or `/api/users`)." },
-                    "file": { "type": "string", "description": "Path to a local fixture file (e.g. `mock.json`) to serve as response body." },
+                    "url": { "type": "string", "description": "URL substring or `:param` path pattern (e.g. `/api/users/:id/orders`)." },
+                    "params": { "type": "object", "description": "Path `:param` values and query parameter subset to match." },
+                    "data": { "type": "object", "description": "Optional JSON request body subset to match against POST/PUT/PATCH body." },
+                    "file": { "type": "string", "description": "Path to a pure response fixture file (e.g. `mock.json`) to serve as response body." },
                     "body": { "type": "string", "description": "Inline response body string (used when `file` is omitted)." },
                     "status": { "type": "integer", "description": "HTTP status code (default 200)." },
+                    "delayMs": { "type": "integer", "description": "Optional artificial network latency in milliseconds." },
+                    "fail": { "type": "string", "description": "Optional CDP network error reason to fail the request (e.g. `TimedOut`, `Aborted`, `Failed`)." },
                     "headers": { "type": "object", "description": "Optional response headers map." },
                     "patterns": { "type": "array", "items": { "type": "string" }, "description": "Optional CDP Fetch URL wildcard patterns (default `[*]`)." }
                 }

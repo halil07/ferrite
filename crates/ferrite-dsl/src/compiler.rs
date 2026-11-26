@@ -594,7 +594,7 @@ fn expand_stmts(
                 });
             }
             Stmt::Mock(mock) => {
-                if !(100..=599).contains(&mock.status) {
+                if mock.fail_reason.is_none() && !(100..=599).contains(&mock.status) {
                     return Err(DslError::Compile {
                         file: file.to_string(),
                         span: mock.span,
@@ -604,6 +604,24 @@ fn expand_stmts(
                         ),
                     });
                 }
+                if let Some(ref reason) = mock.fail_reason {
+                    validate_fail_reason(reason, file, mock.span)?;
+                }
+
+                let mut params = HashMap::with_capacity(mock.params.len());
+                for (k, v) in &mock.params {
+                    params.insert(
+                        interpolate(k, scope, file, mock.span)?,
+                        interpolate(v, scope, file, mock.span)?,
+                    );
+                }
+
+                let data = mock
+                    .data
+                    .as_ref()
+                    .map(|val| interpolate_json(val, scope, file, mock.span))
+                    .transpose()?;
+
                 let mut headers = HashMap::with_capacity(mock.headers.len());
                 for (k, v) in &mock.headers {
                     headers.insert(
@@ -640,11 +658,21 @@ fn expand_stmts(
                 out_steps.push(TestStep::MockRoute {
                     url_substring: interpolate(&mock.url_substring, scope, file, mock.span)?,
                     method: mock.method.clone(),
+                    params,
+                    data,
                     status: mock.status,
                     headers,
                     body,
+                    delay_ms: mock.delay_ms,
+                    fail_reason: mock.fail_reason.clone(),
                     patterns,
                 });
+            }
+            Stmt::MockLoad { file_path, span } => {
+                let rel = interpolate(file_path, scope, file, *span)?;
+                let scenario_path = source_dir.join(&rel);
+                let loaded = compile_mock_scenario_file(&scenario_path, scope, file, *span)?;
+                out_steps.extend(loaded);
             }
             Stmt::MockClear { .. } => {
                 out_steps.push(TestStep::MockClear);
@@ -692,6 +720,204 @@ fn resolve_jquery_css(
         return Ok((base.to_string(), idx));
     }
     Ok((trimmed.to_string(), default_nth))
+}
+
+const VALID_FAIL_REASONS: &[&str] = &[
+    "Failed",
+    "Aborted",
+    "TimedOut",
+    "AccessDenied",
+    "ConnectionClosed",
+    "ConnectionReset",
+    "ConnectionRefused",
+    "ConnectionAborted",
+    "ConnectionFailed",
+    "NameNotResolved",
+    "InternetDisconnected",
+    "BlockedByClient",
+    "BlockedByResponse",
+];
+
+fn validate_fail_reason(reason: &str, file: &str, span: Span) -> Result<(), DslError> {
+    if !VALID_FAIL_REASONS.contains(&reason) {
+        return Err(DslError::Compile {
+            file: file.to_string(),
+            span,
+            message: format!(
+                "invalid mock fail reason `{reason}`; expected one of: {}",
+                VALID_FAIL_REASONS.join(", ")
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn compile_mock_scenario_file(
+    scenario_path: &Path,
+    scope: &HashMap<String, String>,
+    file: &str,
+    span: Span,
+) -> Result<Vec<TestStep>, DslError> {
+    let raw = fs::read_to_string(scenario_path).map_err(|source| DslError::Io {
+        path: scenario_path.to_path_buf(),
+        source,
+    })?;
+    let parsed: Value = serde_json::from_str(&raw).map_err(|err| DslError::Compile {
+        file: file.to_string(),
+        span,
+        message: format!("invalid mock scenario JSON `{}`: {err}", scenario_path.display()),
+    })?;
+
+    let entries = if let Some(arr) = parsed.as_array() {
+        arr.clone()
+    } else if let Some(arr) = parsed.get("routes").and_then(Value::as_array) {
+        arr.clone()
+    } else {
+        return Err(DslError::Compile {
+            file: file.to_string(),
+            span,
+            message: format!(
+                "mock scenario file `{}` must be a JSON array `[...]` or `{{\"routes\": [...]}}`",
+                scenario_path.display()
+            ),
+        });
+    };
+
+    let scenario_dir = scenario_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut steps = Vec::with_capacity(entries.len());
+
+    for (idx, item) in entries.iter().enumerate() {
+        let Some(obj) = item.as_object() else {
+            return Err(DslError::Compile {
+                file: file.to_string(),
+                span,
+                message: format!(
+                    "mock scenario `{}` entry #{idx} must be a JSON object",
+                    scenario_path.display()
+                ),
+            });
+        };
+
+        let raw_url = obj
+            .get("url")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DslError::Compile {
+                file: file.to_string(),
+                span,
+                message: format!(
+                    "mock scenario `{}` entry #{idx} is missing required string `url`",
+                    scenario_path.display()
+                ),
+            })?;
+        let url_substring = interpolate(raw_url, scope, file, span)?;
+
+        let method = obj
+            .get("method")
+            .and_then(Value::as_str)
+            .map(|m| m.to_ascii_uppercase())
+            .filter(|m| m != "ANY" && m != "*");
+
+        let mut params = HashMap::new();
+        if let Some(pmap) = obj.get("params").and_then(Value::as_object) {
+            for (k, v) in pmap {
+                let raw_val = match v {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                params.insert(
+                    interpolate(k, scope, file, span)?,
+                    interpolate(&raw_val, scope, file, span)?,
+                );
+            }
+        }
+
+        let data = obj
+            .get("data")
+            .map(|v| interpolate_json(v, scope, file, span))
+            .transpose()?;
+
+        let status = obj.get("status").and_then(Value::as_u64).unwrap_or(200) as u16;
+        let fail_reason = obj.get("fail").and_then(Value::as_str).map(str::to_string);
+        if let Some(ref reason) = fail_reason {
+            validate_fail_reason(reason, file, span)?;
+        } else if !(100..=599).contains(&status) {
+            return Err(DslError::Compile {
+                file: file.to_string(),
+                span,
+                message: format!(
+                    "mock scenario `{}` entry #{idx} has invalid HTTP status {status} (expected 100..=599)",
+                    scenario_path.display()
+                ),
+            });
+        }
+
+        let delay_ms = obj
+            .get("delayMs")
+            .or_else(|| obj.get("delay"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+
+        let mut headers = HashMap::new();
+        if let Some(hmap) = obj.get("headers").and_then(Value::as_object) {
+            for (k, v) in hmap {
+                if let Some(vs) = v.as_str() {
+                    headers.insert(
+                        interpolate(k, scope, file, span)?,
+                        interpolate(vs, scope, file, span)?,
+                    );
+                }
+            }
+        }
+
+        let mut patterns = Vec::new();
+        if let Some(pat) = obj.get("pattern").and_then(Value::as_str) {
+            patterns.push(interpolate(pat, scope, file, span)?);
+        }
+        if let Some(arr) = obj.get("patterns").and_then(Value::as_array) {
+            for p in arr {
+                if let Some(s) = p.as_str() {
+                    patterns.push(interpolate(s, scope, file, span)?);
+                }
+            }
+        }
+
+        let body = if let Some(resp_rel) = obj
+            .get("response")
+            .or_else(|| obj.get("file"))
+            .and_then(Value::as_str)
+        {
+            let resolved_rel = interpolate(resp_rel, scope, file, span)?;
+            let target = scenario_dir.join(&resolved_rel);
+            if !headers
+                .keys()
+                .any(|k| k.eq_ignore_ascii_case("content-type"))
+                && let Some(ct) = infer_content_type(&target)
+            {
+                headers.insert("content-type".to_string(), ct.to_string());
+            }
+            fs::read_to_string(&target).map_err(|source| DslError::Io {
+                path: target,
+                source,
+            })?
+        } else {
+            String::new()
+        };
+
+        steps.push(TestStep::MockRoute {
+            url_substring,
+            method,
+            params,
+            data,
+            status,
+            headers,
+            body,
+            delay_ms,
+            fail_reason,
+            patterns,
+        });
+    }
+
+    Ok(steps)
 }
 
 fn infer_content_type(path: &Path) -> Option<&'static str> {
@@ -1020,52 +1246,112 @@ mod tests {
     }
 
     #[test]
-    fn compiles_shorthand_mock_with_method_file_and_clear() {
+    fn compiles_fluent_mock_when_and_external_mock_load() {
         let dir = std::env::temp_dir().join(format!("ferrite-dsl-mock-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("mock.json"), r#"{"ok":true,"source":"mock"}"#).unwrap();
+        fs::create_dir_all(dir.join("mocks/responses")).unwrap();
+        fs::write(
+            dir.join("mocks/responses/orders.json"),
+            r#"{"orders":[{"id":101}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("mocks/responses/login-ok.json"),
+            r#"{"token":"jwt-123"}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("mocks/checkout.mock.json"),
+            r#"[
+              {
+                "method": "POST",
+                "url": "/api/login",
+                "data": { "email": "admin@test.com" },
+                "status": 200,
+                "delayMs": 150,
+                "response": "./responses/login-ok.json"
+              },
+              {
+                "method": "GET",
+                "url": "/api/down",
+                "fail": "TimedOut",
+                "delayMs": 50
+              }
+            ]"#,
+        )
+        .unwrap();
 
         let src = r#"
             suite("api-mock");
-            test("intercepts-real-service") {
-                await mock("GET", "real_service", "mock.json");
-                await mock("POST", "/api/orders", "mock.json", 201);
+            test("fluent-and-scenario-mocks") {
+                await mock.when("GET", "/api/users/:id/orders")
+                    .params({ id: "42", page: "1" })
+                    .header("x-mock", "true")
+                    .delay(300ms)
+                    .reply(200, "./mocks/responses/orders.json");
+                await mock.when("GET", "/api/health").abort();
+                await mock.load("./mocks/checkout.mock.json");
                 await mock.clear();
             }
         "#;
         let suite = compile_source("mock.ferrite", &dir, src).unwrap();
         let steps = &suite.cases[0].steps;
-        assert_eq!(steps.len(), 3);
+        assert_eq!(steps.len(), 5);
         match &steps[0] {
             TestStep::MockRoute {
                 url_substring,
                 method,
+                params,
                 status,
                 headers,
                 body,
+                delay_ms,
+                fail_reason,
                 ..
             } => {
-                assert_eq!(url_substring, "real_service");
+                assert_eq!(url_substring, "/api/users/:id/orders");
                 assert_eq!(method.as_deref(), Some("GET"));
+                assert_eq!(params.get("id").map(String::as_str), Some("42"));
+                assert_eq!(params.get("page").map(String::as_str), Some("1"));
                 assert_eq!(*status, 200);
+                assert_eq!(*delay_ms, 300);
+                assert!(fail_reason.is_none());
                 assert_eq!(
                     headers.get("content-type").map(String::as_str),
                     Some("application/json; charset=utf-8")
                 );
-                assert!(body.contains(r#""source":"mock""#));
+                assert_eq!(headers.get("x-mock").map(String::as_str), Some("true"));
+                assert!(body.contains("101"));
             }
             other => panic!("expected MockRoute, got {other:?}"),
         }
         assert!(matches!(
             &steps[1],
             TestStep::MockRoute {
-                method: Some(m),
-                status: 201,
+                fail_reason: Some(r),
                 ..
-            } if m == "POST"
+            } if r == "Aborted"
         ));
-        assert!(matches!(&steps[2], TestStep::MockClear));
+        assert!(matches!(
+            &steps[2],
+            TestStep::MockRoute {
+                url_substring,
+                delay_ms: 150,
+                data: Some(_),
+                body,
+                ..
+            } if url_substring == "/api/login" && body.contains("jwt-123")
+        ));
+        assert!(matches!(
+            &steps[3],
+            TestStep::MockRoute {
+                url_substring,
+                fail_reason: Some(r),
+                delay_ms: 50,
+                ..
+            } if url_substring == "/api/down" && r == "TimedOut"
+        ));
+        assert!(matches!(&steps[4], TestStep::MockClear));
 
         let _ = fs::remove_dir_all(&dir);
     }

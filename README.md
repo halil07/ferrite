@@ -139,22 +139,29 @@ To update visual baseline PNGs after an intentional UI change:
 npx ferrite run --update-baselines
 ```
 
-### Network Mocking (`mock`)
+### Network Mocking (`mock.when` & `mock.load`)
 
-Intercept matching HTTP/XHR/Fetch requests directly in Chrome and serve local fixture files or custom responses:
+Intercept HTTP/XHR/Fetch requests directly in Chrome with `:param` path substitution, subset matching on `params` and JSON `data`, non-blocking `delay`, network failure simulation, and pure response JSON files:
 
 ```ferrite
-// Shorthand: mock("METHOD", "url-substring", "fixture-file"[, status])
-await mock("GET", "real_service", "mock.json");
-await mock("POST", "/api/orders", "./fixtures/order-created.json", 201);
+// Fluent jQuery-style rule (`:id` is resolved from `params`; remaining params match query subset)
+await mock.when("GET", "/api/users/:id/orders")
+  .params({ id: "42", page: "1" })
+  .reply(200, "./mocks/responses/orders.json")
+  .delay(300ms);
 
-// Full options object
-await mock("GET", "/api/session", {
-  status: 200,
-  pattern: "*://example.com/*",
-  headers: { "content-type": "application/json" },
-  body: "{\"authenticated\":true}"
-});
+// POST body subset matching (extra fields like timestamp/csrfToken are ignored)
+await mock.when("POST", "/api/login")
+  .data({ email: "admin@test.com" })
+  .header("x-mock", "true")
+  .reply(200, "./mocks/responses/login-ok.json");
+
+// Simulate network timeout or abort
+await mock.when("GET", "/api/health").delay(200ms).fail("TimedOut");
+await mock.when("GET", "/api/down").abort();
+
+// Load an external mock scenario file (`*.mock.json`) pointing to pure response JSON files
+await mock.load("./mocks/checkout.mock.json");
 
 // Clear all active mocks on the tab
 await mock.clear();

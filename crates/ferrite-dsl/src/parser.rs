@@ -989,27 +989,46 @@ impl<'a> Parser<'a> {
     fn parse_mock(&mut self, span: Span) -> Result<Stmt, DslError> {
         if self.eat_kind(&TokenKind::Dot) {
             let (sub, sub_span) = self.expect_ident()?;
-            self.expect_kind(&TokenKind::LParen, "`(`")?;
-            self.expect_kind(&TokenKind::RParen, "`)`")?;
-            if sub == "clear" {
-                return Ok(Stmt::MockClear { span });
+            match sub.as_str() {
+                "clear" => {
+                    self.expect_kind(&TokenKind::LParen, "`(`")?;
+                    self.expect_kind(&TokenKind::RParen, "`)`")?;
+                    return Ok(Stmt::MockClear { span });
+                }
+                "load" => {
+                    self.expect_kind(&TokenKind::LParen, "`(`")?;
+                    let (file_path, _) = self.expect_string()?;
+                    self.expect_kind(&TokenKind::RParen, "`)`")?;
+                    return Ok(Stmt::MockLoad { file_path, span });
+                }
+                "when" => {
+                    return self.parse_mock_when_chain(span);
+                }
+                other => {
+                    return Err(self.err(
+                        sub_span,
+                        format!(
+                            "unknown `mock.{other}()` method (use `mock.when(...)`, `mock.load(\"...\")`, or `mock.clear()`)"
+                        ),
+                    ));
+                }
             }
-            return Err(self.err(
-                sub_span,
-                format!("unknown `mock.{sub}()` method (use `mock.clear()`)"),
-            ));
         }
 
+        // Concise shorthand: `mock("GET", "real_service", "mock.json"[, 201])`
         self.expect_kind(&TokenKind::LParen, "`(`")?;
         let (first, _) = self.expect_string()?;
         let mut method: Option<String> = None;
         let url_substring: String;
+        let mut params = HashMap::new();
+        let mut data: Option<Value> = None;
         let mut status: u16 = 200;
         let mut headers = HashMap::new();
         let mut patterns = Vec::new();
         let mut body: Option<MockBodyAst> = None;
+        let mut delay_ms: u64 = 0;
+        let mut fail_reason: Option<String> = None;
 
-        // Check if first argument is an HTTP method: `mock("GET", "real_service", "mock.json")`
         let first_upper = first.to_ascii_uppercase();
         let is_http_method = matches!(
             first_upper.as_str(),
@@ -1027,18 +1046,30 @@ impl<'a> Parser<'a> {
 
         if self.eat_kind(&TokenKind::Comma) {
             if *self.peek_kind() == TokenKind::LBrace {
-                self.parse_mock_options_obj(&mut status, &mut headers, &mut patterns, &mut body)?;
+                self.parse_mock_options_obj(
+                    &mut params,
+                    &mut data,
+                    &mut status,
+                    &mut headers,
+                    &mut patterns,
+                    &mut body,
+                    &mut delay_ms,
+                    &mut fail_reason,
+                )?;
             } else {
-                // Shorthand file path: `mock("GET", "real_service", "mock.json"[, 201])`
                 let (rel_file, _) = self.expect_string()?;
                 body = Some(MockBodyAst::File(rel_file));
                 if self.eat_kind(&TokenKind::Comma) {
                     if *self.peek_kind() == TokenKind::LBrace {
                         self.parse_mock_options_obj(
+                            &mut params,
+                            &mut data,
                             &mut status,
                             &mut headers,
                             &mut patterns,
                             &mut body,
+                            &mut delay_ms,
+                            &mut fail_reason,
                         )?;
                     } else {
                         let (code, code_span) = self.expect_u64_int()?;
@@ -1054,20 +1085,192 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Mock(MockStmt {
             url_substring,
             method,
+            params,
+            data,
             status,
             headers,
             patterns,
             body,
+            delay_ms,
+            fail_reason,
             span,
         }))
     }
 
+    fn parse_mock_when_chain(&mut self, span: Span) -> Result<Stmt, DslError> {
+        self.expect_kind(&TokenKind::LParen, "`(`")?;
+        let (first, _) = self.expect_string()?;
+        let (method, url_substring) = if self.eat_kind(&TokenKind::Comma) {
+            let upper = first.to_ascii_uppercase();
+            let m = if upper == "ANY" || upper == "*" {
+                None
+            } else {
+                Some(upper)
+            };
+            (m, self.expect_string()?.0)
+        } else {
+            (None, first)
+        };
+        self.expect_kind(&TokenKind::RParen, "`)`")?;
+
+        let mut params = HashMap::new();
+        let mut data: Option<Value> = None;
+        let mut status: u16 = 200;
+        let mut headers = HashMap::new();
+        let mut patterns = Vec::new();
+        let mut body: Option<MockBodyAst> = None;
+        let mut delay_ms: u64 = 0;
+        let mut fail_reason: Option<String> = None;
+        let mut has_terminal = false;
+
+        while self.eat_kind(&TokenKind::Dot) {
+            let (m_name, m_span) = self.expect_ident()?;
+            self.expect_kind(&TokenKind::LParen, "`(`")?;
+            match m_name.as_str() {
+                "params" => {
+                    let obj = self.parse_json_value()?;
+                    let Some(map) = obj.as_object() else {
+                        return Err(self.err(m_span, "`.params(...)` expects an object `{ key: value }`"));
+                    };
+                    for (k, v) in map {
+                        let s = match v {
+                            Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        };
+                        params.insert(k.clone(), s);
+                    }
+                }
+                "data" => {
+                    data = Some(self.parse_json_value()?);
+                }
+                "delay" => {
+                    delay_ms = self.expect_duration_ms()?;
+                }
+                "pattern" => {
+                    let (pat, _) = self.expect_string()?;
+                    patterns.push(pat);
+                }
+                "header" => {
+                    let (k, _) = self.expect_string()?;
+                    self.expect_kind(&TokenKind::Comma, "`,`")?;
+                    let (v, _) = self.expect_string()?;
+                    headers.insert(k, v);
+                }
+                "headers" => {
+                    let obj = self.parse_json_value()?;
+                    let Some(map) = obj.as_object() else {
+                        return Err(self.err(m_span, "`.headers(...)` expects an object `{ key: value }`"));
+                    };
+                    for (k, v) in map {
+                        if let Some(s) = v.as_str() {
+                            headers.insert(k.clone(), s.to_string());
+                        }
+                    }
+                }
+                "reply" => {
+                    has_terminal = true;
+                    match self.peek_kind() {
+                        TokenKind::Int(_) => {
+                            let (code, code_span) = self.expect_u64_int()?;
+                            status = u16::try_from(code).map_err(|_| {
+                                self.err(code_span, format!("invalid HTTP status code {code}"))
+                            })?;
+                            if self.eat_kind(&TokenKind::Comma) {
+                                let (rel_file, _) = self.expect_string()?;
+                                body = Some(MockBodyAst::File(rel_file));
+                            }
+                        }
+                        TokenKind::Str(_) => {
+                            let (rel_file, _) = self.expect_string()?;
+                            body = Some(MockBodyAst::File(rel_file));
+                        }
+                        other => {
+                            return Err(self.err(
+                                m_span,
+                                format!(
+                                    "expected status code or response file path in `.reply(...)`, found {other:?}"
+                                ),
+                            ));
+                        }
+                    }
+                }
+                "replyJson" => {
+                    has_terminal = true;
+                    let (code, code_span) = self.expect_u64_int()?;
+                    status = u16::try_from(code).map_err(|_| {
+                        self.err(code_span, format!("invalid HTTP status code {code}"))
+                    })?;
+                    self.expect_kind(&TokenKind::Comma, "`,`")?;
+                    let val = self.parse_json_value()?;
+                    if !headers
+                        .keys()
+                        .any(|k| k.eq_ignore_ascii_case("content-type"))
+                    {
+                        headers.insert(
+                            "content-type".to_string(),
+                            "application/json; charset=utf-8".to_string(),
+                        );
+                    }
+                    body = Some(MockBodyAst::Inline(val.to_string()));
+                }
+                "fail" => {
+                    has_terminal = true;
+                    let reason = if *self.peek_kind() != TokenKind::RParen {
+                        self.expect_string()?.0
+                    } else {
+                        "Failed".to_string()
+                    };
+                    fail_reason = Some(reason);
+                }
+                "abort" => {
+                    has_terminal = true;
+                    fail_reason = Some("Aborted".to_string());
+                }
+                other => {
+                    return Err(self.err(
+                        m_span,
+                        format!(
+                            "unknown `mock.when(...)` method `.{other}()` (use `.params()`, `.data()`, `.reply()`, `.delay()`, `.header()`, `.headers()`, `.pattern()`, `.fail()`, or `.abort()`)"
+                        ),
+                    ));
+                }
+            }
+            self.expect_kind(&TokenKind::RParen, "`)`")?;
+        }
+
+        if !has_terminal {
+            return Err(self.err(
+                span,
+                "`mock.when(...)` must end with `.reply(...)`, `.fail(...)`, or `.abort()`",
+            ));
+        }
+
+        Ok(Stmt::Mock(MockStmt {
+            url_substring,
+            method,
+            params,
+            data,
+            status,
+            headers,
+            patterns,
+            body,
+            delay_ms,
+            fail_reason,
+            span,
+        }))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn parse_mock_options_obj(
         &mut self,
+        params: &mut HashMap<String, String>,
+        data: &mut Option<Value>,
         status: &mut u16,
         headers: &mut HashMap<String, String>,
         patterns: &mut Vec<String>,
         body: &mut Option<MockBodyAst>,
+        delay_ms: &mut u64,
+        fail_reason: &mut Option<String>,
     ) -> Result<(), DslError> {
         let obj = self.parse_json_value()?;
         let Some(map) = obj.as_object() else {
@@ -1075,6 +1278,20 @@ impl<'a> Parser<'a> {
         };
         for (k, v) in map {
             match k.as_str() {
+                "params" => {
+                    if let Some(pmap) = v.as_object() {
+                        for (pk, pv) in pmap {
+                            let s = match pv {
+                                Value::String(s) => s.clone(),
+                                other => other.to_string(),
+                            };
+                            params.insert(pk.clone(), s);
+                        }
+                    }
+                }
+                "data" => {
+                    *data = Some(v.clone());
+                }
                 "status" => {
                     let code = v.as_u64().ok_or_else(|| {
                         self.err(self.peek_span(), "mock `status` must be an integer")
@@ -1082,6 +1299,14 @@ impl<'a> Parser<'a> {
                     *status = u16::try_from(code).map_err(|_| {
                         self.err(self.peek_span(), format!("invalid HTTP status code {code}"))
                     })?;
+                }
+                "delayMs" | "delay" => {
+                    *delay_ms = v.as_u64().ok_or_else(|| {
+                        self.err(self.peek_span(), "mock `delayMs` must be a non-negative integer")
+                    })?;
+                }
+                "fail" => {
+                    *fail_reason = v.as_str().map(str::to_string);
                 }
                 "pattern" => {
                     if let Some(s) = v.as_str() {
@@ -1113,9 +1338,9 @@ impl<'a> Parser<'a> {
                         *body = Some(MockBodyAst::Inline(v.to_string()));
                     }
                 }
-                "bodyFile" | "file" => {
+                "response" | "bodyFile" | "file" => {
                     let rel = v.as_str().ok_or_else(|| {
-                        self.err(self.peek_span(), "mock `file`/`bodyFile` must be a string path")
+                        self.err(self.peek_span(), "mock `response`/`file` must be a string path")
                     })?;
                     *body = Some(MockBodyAst::File(rel.to_string()));
                 }
@@ -1123,7 +1348,7 @@ impl<'a> Parser<'a> {
                     return Err(self.err(
                         self.peek_span(),
                         format!(
-                            "unknown mock option `{other}` (use `status`, `pattern`, `patterns`, `headers`, `body`, or `file`)"
+                            "unknown mock option `{other}` (use `params`, `data`, `status`, `delayMs`, `fail`, `pattern`, `patterns`, `headers`, `body`, or `response`)"
                         ),
                     ));
                 }

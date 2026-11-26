@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
+use url::Url;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -358,11 +359,19 @@ pub struct MockRouteResponse {
     pub url_substring: String,
     #[serde(default)]
     pub method: Option<String>,
+    /// Query parameters and `:param` path parameters (subset match on query params).
+    #[serde(default)]
+    pub params: HashMap<String, String>,
+    /// Optional JSON request body subset that must match `request.postData`.
+    #[serde(default)]
+    pub data: Option<Value>,
     pub status: u16,
     #[serde(default)]
     pub headers: HashMap<String, String>,
     #[serde(default)]
     pub body: String,
+    #[serde(default)]
+    pub delay_ms: u64,
     #[serde(default)]
     pub fail_reason: Option<String>,
 }
@@ -458,6 +467,9 @@ impl FetchInterceptor {
             .and_then(|r| r.get("method"))
             .and_then(Value::as_str)
             .unwrap_or("GET");
+        let post_data = req_obj
+            .and_then(|r| r.get("postData"))
+            .and_then(Value::as_str);
 
         let matched = {
             let routes = self.routes.lock().expect("fetch routes mutex poisoned");
@@ -465,21 +477,16 @@ impl FetchInterceptor {
             routes
                 .iter()
                 .rev()
-                .find(|r| {
-                    let method_ok = match r.method.as_deref() {
-                        Some(m) if !m.is_empty() && m != "*" && !m.eq_ignore_ascii_case("ANY") => {
-                            m.eq_ignore_ascii_case(req_method)
-                        }
-                        _ => true,
-                    };
-                    method_ok && url.contains(&r.url_substring)
-                })
+                .find(|r| route_matches(r, req_method, url, post_data))
                 .cloned()
         };
 
         let session_id = event.session_id.as_deref();
         match matched {
             Some(route) if route.fail_reason.is_some() => {
+                if route.delay_ms > 0 {
+                    tokio::time::sleep(Duration::from_millis(route.delay_ms)).await;
+                }
                 self.transport
                     .send_cdp(
                         self.tab_id,
@@ -493,6 +500,9 @@ impl FetchInterceptor {
                     .await?;
             }
             Some(route) => {
+                if route.delay_ms > 0 {
+                    tokio::time::sleep(Duration::from_millis(route.delay_ms)).await;
+                }
                 let mut headers = route.headers;
                 let has_acao = headers
                     .keys()
@@ -553,15 +563,185 @@ impl FetchInterceptor {
             loop {
                 match rx.recv().await {
                     Ok(ev) => {
-                        if let Err(err) = self.handle_paused_event(&ev).await {
-                            tracing::warn!("FetchInterceptor error: {err}");
+                        if ev.tab_id != self.tab_id || ev.method != "Fetch.requestPaused" {
+                            continue;
                         }
+                        // Handle each paused request concurrently so a mock `.delay(...)`
+                        // never blocks unrelated parallel page requests.
+                        let interceptor = Arc::clone(&self);
+                        tokio::spawn(async move {
+                            if let Err(err) = interceptor.handle_paused_event(&ev).await {
+                                tracing::warn!("FetchInterceptor error: {err}");
+                            }
+                        });
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
         })
+    }
+}
+
+/// Evaluates whether a paused request matches a [`MockRouteResponse`]:
+/// - HTTP method (case-insensitive; `None`/`*`/`ANY` matches any method)
+/// - URL path with `:param` substitution from `route.params` (or single-segment wildcard if `:param`
+///   is not present in `route.params`)
+/// - Remaining `route.params` as order-independent subset of URL query parameters
+/// - Optional `route.data` as recursive JSON subset of `request.postData`
+pub fn route_matches(
+    route: &MockRouteResponse,
+    req_method: &str,
+    req_url: &str,
+    post_data: Option<&str>,
+) -> bool {
+    let method_ok = match route.method.as_deref() {
+        Some(m) if !m.is_empty() && m != "*" && !m.eq_ignore_ascii_case("ANY") => {
+            m.eq_ignore_ascii_case(req_method)
+        }
+        _ => true,
+    };
+    if !method_ok {
+        return false;
+    }
+
+    // Substitute `:param` placeholders in `url_substring` using `route.params`.
+    let mut consumed_params = Vec::new();
+    let mut resolved_segments = Vec::new();
+    let raw_pattern = route.url_substring.as_str();
+    let (pattern_path, pattern_has_scheme) = if raw_pattern.contains("://") {
+        (raw_pattern, true)
+    } else {
+        (raw_pattern, false)
+    };
+
+    let has_path_params = pattern_path
+        .split('/')
+        .any(|seg| seg.starts_with(':') && seg.len() > 1);
+
+    let url_ok = if has_path_params {
+        for seg in pattern_path.split('/') {
+            if let Some(param_name) = seg.strip_prefix(':')
+                && !param_name.is_empty()
+            {
+                if let Some(val) = route.params.get(param_name) {
+                    consumed_params.push(param_name.to_string());
+                    resolved_segments.push(SegmentMatcher::Exact(val.clone()));
+                } else {
+                    resolved_segments.push(SegmentMatcher::Wildcard);
+                }
+            } else {
+                resolved_segments.push(SegmentMatcher::Exact(seg.to_string()));
+            }
+        }
+        match_url_with_segments(req_url, &resolved_segments, pattern_has_scheme)
+    } else {
+        let req_without_query = req_url.split('?').next().unwrap_or(req_url);
+        req_url.contains(raw_pattern) || req_without_query.contains(raw_pattern)
+    };
+
+    if !url_ok {
+        return false;
+    }
+
+    // Subset-match any remaining `route.params` against the request URL's query parameters.
+    let remaining_query: Vec<(&String, &String)> = route
+        .params
+        .iter()
+        .filter(|(k, _)| !consumed_params.iter().any(|c| c == *k))
+        .collect();
+
+    if !remaining_query.is_empty() {
+        let Ok(parsed) = Url::parse(req_url) else {
+            return false;
+        };
+        let actual_pairs: Vec<(String, String)> = parsed
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        for (ek, ev) in remaining_query {
+            if !actual_pairs.iter().any(|(ak, av)| ak == ek && av == ev) {
+                return false;
+            }
+        }
+    }
+
+    // Recursive JSON subset-match `route.data` against `request.postData`.
+    if let Some(expected_data) = &route.data {
+        let Some(raw_body) = post_data else {
+            return false;
+        };
+        let Ok(actual_json) = serde_json::from_str::<Value>(raw_body) else {
+            return false;
+        };
+        if !json_is_subset(expected_data, &actual_json) {
+            return false;
+        }
+    }
+
+    true
+}
+
+enum SegmentMatcher {
+    Exact(String),
+    Wildcard,
+}
+
+fn match_url_with_segments(
+    req_url: &str,
+    pattern_segments: &[SegmentMatcher],
+    pattern_has_scheme: bool,
+) -> bool {
+    let target = if pattern_has_scheme {
+        req_url.split('?').next().unwrap_or(req_url).to_string()
+    } else if let Ok(parsed) = Url::parse(req_url) {
+        parsed.path().to_string()
+    } else {
+        req_url.split('?').next().unwrap_or(req_url).to_string()
+    };
+
+    let req_segs: Vec<&str> = target.split('/').collect();
+    if pattern_segments.len() > req_segs.len() {
+        return false;
+    }
+
+    for start in 0..=(req_segs.len() - pattern_segments.len()) {
+        let mut all_match = true;
+        for (offset, matcher) in pattern_segments.iter().enumerate() {
+            let actual = req_segs[start + offset];
+            match matcher {
+                SegmentMatcher::Exact(exp) if actual != exp => {
+                    all_match = false;
+                    break;
+                }
+                SegmentMatcher::Wildcard if actual.is_empty() => {
+                    all_match = false;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        if all_match {
+            return true;
+        }
+    }
+    false
+}
+
+/// Returns `true` when `expected` is a recursive subset of `actual`.
+pub fn json_is_subset(expected: &Value, actual: &Value) -> bool {
+    match (expected, actual) {
+        (Value::Object(exp_map), Value::Object(act_map)) => exp_map
+            .iter()
+            .all(|(k, ev)| act_map.get(k).is_some_and(|av| json_is_subset(ev, av))),
+        (Value::Array(exp_arr), Value::Array(act_arr)) => {
+            exp_arr.len() <= act_arr.len()
+                && exp_arr
+                    .iter()
+                    .zip(act_arr.iter())
+                    .all(|(ev, av)| json_is_subset(ev, av))
+        }
+        (a, b) => a == b,
     }
 }
 
@@ -646,9 +826,12 @@ mod tests {
         interceptor.add_route(MockRouteResponse {
             url_substring: "/api/profile".to_string(),
             method: Some("GET".to_string()),
+            params: HashMap::new(),
+            data: None,
             status: 200,
             headers: HashMap::from([("content-type".to_string(), "application/json".to_string())]),
             body: r#"{"name":"Ada"}"#.to_string(),
+            delay_ms: 0,
             fail_reason: None,
         });
 
@@ -713,5 +896,122 @@ mod tests {
         assert_eq!(second_patterns.len(), 2);
         assert_eq!(second_patterns[0]["urlPattern"], "*://example.com/login*");
         assert_eq!(second_patterns[1]["urlPattern"], "*://*/api/*");
+    }
+
+    #[tokio::test]
+    async fn matches_path_params_query_subset_and_json_body_subset() {
+        let mock = MockCdpTransport::new();
+        let interceptor = FetchInterceptor::new(mock.clone(), 1);
+
+        // Route 1: `:id` comes from `params`, `page` matches query string subset.
+        interceptor.add_route(MockRouteResponse {
+            url_substring: "/api/users/:id/orders".to_string(),
+            method: Some("GET".to_string()),
+            params: HashMap::from([
+                ("id".to_string(), "42".to_string()),
+                ("page".to_string(), "1".to_string()),
+            ]),
+            data: None,
+            status: 200,
+            headers: HashMap::new(),
+            body: r#"{"orders":["o1"]}"#.to_string(),
+            delay_ms: 0,
+            fail_reason: None,
+        });
+
+        // Route 2: POST with JSON subset `data` (ignores extra fields like timestamp).
+        interceptor.add_route(MockRouteResponse {
+            url_substring: "/api/login".to_string(),
+            method: Some("POST".to_string()),
+            params: HashMap::new(),
+            data: Some(json!({ "email": "admin@test.com" })),
+            status: 200,
+            headers: HashMap::new(),
+            body: r#"{"role":"admin"}"#.to_string(),
+            delay_ms: 0,
+            fail_reason: None,
+        });
+
+        // Route 3: Network failure simulation.
+        interceptor.add_route(MockRouteResponse {
+            url_substring: "/api/health".to_string(),
+            method: Some("GET".to_string()),
+            params: HashMap::new(),
+            data: None,
+            status: 500,
+            headers: HashMap::new(),
+            body: String::new(),
+            delay_ms: 0,
+            fail_reason: Some("TimedOut".to_string()),
+        });
+
+        // Wrong :id (99 != 42) -> continues unmodified.
+        interceptor
+            .handle_paused_event(&CdpEvent {
+                tab_id: 1,
+                method: "Fetch.requestPaused".to_string(),
+                params: json!({
+                    "requestId": "r1",
+                    "request": { "url": "https://api.example/api/users/99/orders?page=1&ts=999", "method": "GET" }
+                }),
+                session_id: None,
+            })
+            .await
+            .unwrap();
+
+        // Matching :id=42 + page=1 (with extra query param ts=999) -> fulfilled!
+        interceptor
+            .handle_paused_event(&CdpEvent {
+                tab_id: 1,
+                method: "Fetch.requestPaused".to_string(),
+                params: json!({
+                    "requestId": "r2",
+                    "request": { "url": "https://api.example/api/users/42/orders?ts=999&page=1", "method": "GET" }
+                }),
+                session_id: None,
+            })
+            .await
+            .unwrap();
+
+        // Matching POST JSON subset (extra rememberMe/ts fields ignored) -> fulfilled!
+        interceptor
+            .handle_paused_event(&CdpEvent {
+                tab_id: 1,
+                method: "Fetch.requestPaused".to_string(),
+                params: json!({
+                    "requestId": "r3",
+                    "request": {
+                        "url": "https://api.example/api/login",
+                        "method": "POST",
+                        "postData": r#"{"email":"admin@test.com","rememberMe":true,"ts":123}"#
+                    }
+                }),
+                session_id: None,
+            })
+            .await
+            .unwrap();
+
+        // Health endpoint -> Fetch.failRequest with TimedOut!
+        interceptor
+            .handle_paused_event(&CdpEvent {
+                tab_id: 1,
+                method: "Fetch.requestPaused".to_string(),
+                params: json!({
+                    "requestId": "r4",
+                    "request": { "url": "https://api.example/api/health", "method": "GET" }
+                }),
+                session_id: None,
+            })
+            .await
+            .unwrap();
+
+        let calls = mock.recorded_calls();
+        assert_eq!(calls[0].method, "Fetch.continueRequest");
+        assert_eq!(calls[1].method, "Fetch.fulfillRequest");
+        assert_eq!(calls[1].params["body"], STANDARD.encode(br#"{"orders":["o1"]}"#));
+        assert_eq!(calls[2].method, "Fetch.fulfillRequest");
+        assert_eq!(calls[2].params["body"], STANDARD.encode(br#"{"role":"admin"}"#));
+        assert_eq!(calls[3].method, "Fetch.failRequest");
+        assert_eq!(calls[3].params["errorReason"], "TimedOut");
     }
 }

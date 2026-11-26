@@ -312,11 +312,106 @@ function consoleMethodItems() {
 function mockMethodItems() {
   return [
     makeItem(
+      "when",
+      vscode.CompletionItemKind.Method,
+      'when("${1|GET,POST,PUT,PATCH,DELETE|}", "${2:/api/users/:id/orders}").',
+      'mock.when("METHOD", "url")',
+      "Start a fluent service mock rule (chain `.params()`, `.data()`, `.reply()`, `.delay()`, `.fail()`, `.abort()`).",
+      true
+    ),
+    makeItem(
+      "load",
+      vscode.CompletionItemKind.Method,
+      'load("${1:./mocks/scenario.mock.json}");$0',
+      'mock.load("file.mock.json")',
+      "Load an external mock scenario JSON file with multiple service rules."
+    ),
+    makeItem(
       "clear",
       vscode.CompletionItemKind.Method,
       "clear();$0",
       "mock.clear()",
       "Clear all active Fetch mock routes on the current tab."
+    ),
+  ];
+}
+
+function mockChainItems() {
+  return [
+    makeItem(
+      "params",
+      vscode.CompletionItemKind.Method,
+      'params({ ${1:id}: "${2:1}" }).',
+      ".params({ key: value })",
+      "Provide `:param` path values and query parameter subset to match.",
+      true
+    ),
+    makeItem(
+      "data",
+      vscode.CompletionItemKind.Method,
+      'data({ ${1:key}: "${2:value}" }).',
+      ".data({ ... })",
+      "Match JSON request body as a recursive subset (extra fields ignored).",
+      true
+    ),
+    makeItem(
+      "reply",
+      vscode.CompletionItemKind.Method,
+      'reply(${1:200}, "${2:./responses/mock.json}");$0',
+      '.reply(status, "response.json")',
+      "Respond with HTTP status and a pure external response file."
+    ),
+    makeItem(
+      "replyJson",
+      vscode.CompletionItemKind.Method,
+      "replyJson(${1:200}, { ${2:ok}: true });$0",
+      ".replyJson(status, { ... })",
+      "Respond with HTTP status and inline JSON object."
+    ),
+    makeItem(
+      "delay",
+      vscode.CompletionItemKind.Method,
+      "delay(${1:300ms})",
+      ".delay(duration)",
+      "Simulate network latency (e.g. `300ms`, `2s`) without blocking other requests."
+    ),
+    makeItem(
+      "header",
+      vscode.CompletionItemKind.Method,
+      'header("${1:x-mock}", "${2:true}").',
+      '.header("name", "value")',
+      "Add a response header.",
+      true
+    ),
+    makeItem(
+      "headers",
+      vscode.CompletionItemKind.Method,
+      'headers({ "${1:x-mock}": "${2:true}" }).',
+      ".headers({ ... })",
+      "Add multiple response headers.",
+      true
+    ),
+    makeItem(
+      "pattern",
+      vscode.CompletionItemKind.Method,
+      'pattern("${1:*://api.example.com/*}").',
+      '.pattern("wildcard")',
+      "Restrict CDP Fetch interception URL pattern.",
+      true
+    ),
+    makeItem(
+      "fail",
+      vscode.CompletionItemKind.Method,
+      'fail("${1|TimedOut,Failed,Aborted,ConnectionRefused,ConnectionReset,InternetDisconnected|}");$0',
+      '.fail("TimedOut")',
+      "Simulate a network-level failure (CDP `Network.ErrorReason`)."
+    ),
+    makeItem(
+      "abort",
+      vscode.CompletionItemKind.Method,
+      "abort();$0",
+      ".abort()",
+      "Abort the matched network request (`Aborted`)."
     ),
   ];
 }
@@ -518,7 +613,10 @@ function activate(context) {
           return consoleMethodItems();
         }
 
-        // 3. Right after `mock.`
+        // 3. Right after `mock.` or inside a `mock.when(...).` chain
+        if (/(?:^|\bawait\s+)mock\.when\s*\(/.test(prefix) && /\.\s*[A-Za-z_]*$/.test(prefix)) {
+          return mockChainItems();
+        }
         if (/(?:^|\bawait\s+)mock\.\s*[A-Za-z_]*$/.test(prefix)) {
           return mockMethodItems();
         }
