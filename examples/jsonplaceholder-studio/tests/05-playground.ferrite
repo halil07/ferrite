@@ -1,0 +1,22 @@
+suite("JSONPlaceholder Studio - API Playground");
+import "./helpers/studio.ferrite";
+
+test "sends mocked GET and POST requests from API playground" {
+  await open_studio("/playground");
+
+  await $text("API Konsolu").timeout(10s).expect().visible();
+
+  // Varsayilan GET /posts istegini gonder ve mock yaniti dogrula
+  await $('button[type="submit"]').timeout(5s).click();
+  await $text("Ferrite Mock Gonderi Bir").timeout(10s).expect().visible();
+
+  // Tek gonderi (GET /posts/1) preset'ini sec ve gonder
+  await $("button.preset:eq(1)").timeout(5s).click();
+  await $('button[type="submit"]').timeout(5s).click();
+  await $text("Ferrite Mock Gonderi Bir").timeout(10s).expect().visible();
+
+  // Yeni gonderi (POST /posts) preset'ini sec ve 201 mock yanitini dogrula
+  await $("button.preset:eq(4)").timeout(5s).click();
+  await $('button[type="submit"]').timeout(5s).click();
+  await $text("Ferrite Playground Mock Post").timeout(10s).expect().visible();
+}

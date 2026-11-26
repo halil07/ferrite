@@ -1,0 +1,9 @@
+[
+  {
+    "postId": 1,
+    "id": 101,
+    "name": "Mock Yorum Basligi",
+    "email": "ada@ferrite.dev",
+    "body": "Detay sayfasindaki yorumlar da mock.when ile yakalandi."
+  }
+]

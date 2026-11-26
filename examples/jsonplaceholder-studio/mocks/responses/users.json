@@ -1,0 +1,42 @@
+[
+  {
+    "id": 1,
+    "name": "Ada Lovelace",
+    "username": "ada",
+    "email": "ada@ferrite.dev",
+    "phone": "+90 555 000 0001",
+    "website": "ferrite.dev",
+    "company": {
+      "name": "Ferrite Labs",
+      "catchPhrase": "Deterministic E2E Mocking",
+      "bs": "fast browser automation"
+    },
+    "address": {
+      "street": "Mock St",
+      "suite": "Suite 1",
+      "city": "Istanbul",
+      "zipcode": "34000",
+      "geo": { "lat": "41.0", "lng": "29.0" }
+    }
+  },
+  {
+    "id": 2,
+    "name": "Grace Hopper",
+    "username": "grace",
+    "email": "grace@ferrite.dev",
+    "phone": "+90 555 000 0002",
+    "website": "hopper.dev",
+    "company": {
+      "name": "Compiler Works",
+      "catchPhrase": "Zero Flaky Tests",
+      "bs": "typed browser control"
+    },
+    "address": {
+      "street": "Compiler Ave",
+      "suite": "Suite 2",
+      "city": "Ankara",
+      "zipcode": "06000",
+      "geo": { "lat": "39.9", "lng": "32.8" }
+    }
+  }
+]

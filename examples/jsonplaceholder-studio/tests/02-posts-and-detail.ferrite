@@ -1,0 +1,23 @@
+suite("JSONPlaceholder Studio - Posts and Detail");
+import "./helpers/studio.ferrite";
+
+test "lists, filters, and opens mocked post detail with comments" {
+  await open_studio("/posts");
+
+  await $text("Ferrite Mock Gonderi Bir").timeout(10s).expect().visible();
+  await $text("Ferrite Mock Gonderi Iki").timeout(10s).expect().visible();
+
+  // Arama kutusu ile filtreleme
+  await $('input[type="search"]').timeout(5s).fill("Gonderi Iki");
+  await $text("Ferrite Mock Gonderi Iki").timeout(5s).expect().visible();
+  await $text("Ferrite Mock Gonderi Bir").timeout(5s).expect().hidden();
+
+  // Aramayi temizleyip 1. gonderinin detayina gir
+  await $('input[type="search"]').timeout(5s).fill("");
+  await $('a[href="/posts/1"]').timeout(5s).click();
+
+  // :id parametre eslesmesi ile mocklanan detay ve yorumlar
+  await $(".post-detail h2").timeout(10s).expect().visible();
+  await $text("Mock Yorum Basligi").timeout(10s).expect().visible();
+  await $text("ada@ferrite.dev").timeout(5s).expect().visible();
+}

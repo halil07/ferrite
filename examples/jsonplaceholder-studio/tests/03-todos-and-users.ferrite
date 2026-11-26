@@ -1,0 +1,41 @@
+suite("JSONPlaceholder Studio - Todos and Users");
+import "./helpers/studio.ferrite";
+
+test "renders mocked todos summary and toggles pending todo via PATCH mock" {
+  await open_studio("/todos");
+
+  await $text("Mock Tamamlanan Gorev").timeout(10s).expect().visible();
+  await $text("Mock Bekleyen Gorev").timeout(10s).expect().visible();
+  await $text("50").timeout(5s).expect().visible();
+  await $text("Bekliyor").timeout(5s).expect().visible();
+
+  // Bekleyen gorevi isaretleyerek PATCH /todos/2 mock'unu tetikle
+  await $('input[type="checkbox"]:eq(1)').timeout(5s).click();
+  await $text("100").timeout(10s).expect().visible();
+  await $('input[type="checkbox"]:checked').timeout(5s).expect().count(2);
+}
+
+test "renders mocked users directory and opens user detail tabs" {
+  await open_studio("/users");
+
+  await $(".user-card").timeout(10s).expect().count(2);
+  await $text("Ada Lovelace").timeout(5s).expect().visible();
+  await $text("Grace Hopper").timeout(5s).expect().visible();
+  await $text("ada@ferrite.dev").timeout(5s).expect().visible();
+  await $text("grace@ferrite.dev").timeout(5s).expect().visible();
+  await $text("Ferrite Labs").timeout(5s).expect().visible();
+  await $text("Compiler Works").timeout(5s).expect().visible();
+
+  // /users/:id detay sayfasina gecis
+  await $('a[href="/users/1"]').timeout(5s).click();
+  await $text("Ada Lovelace").timeout(10s).expect().visible();
+  await $text("Deterministic E2E Mocking").timeout(10s).expect().visible();
+  await $text("Ferrite Mock Gonderi Bir").timeout(10s).expect().visible();
+
+  // Kullanici detay sekmeleri (Albumler & Yapilacaklar)
+  await $role("button", "Albumler").timeout(5s).click();
+  await $text("Ferrite Mock Album").timeout(10s).expect().visible();
+
+  await $role("button", "Yapilacaklar").timeout(5s).click();
+  await $text("Mock Tamamlanan Gorev").timeout(10s).expect().visible();
+}

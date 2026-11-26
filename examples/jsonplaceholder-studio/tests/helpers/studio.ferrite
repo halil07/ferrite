@@ -1,0 +1,72 @@
+let app_url = "http://localhost:5173";
+
+macro setup_studio_mocks() {
+  await mock.clear();
+
+  // 1. Genel liste endpoint'lerini harici senaryo dosyasindan yukle
+  await mock.load("../../mocks/studio.mock.json");
+
+  // 2. Spesifik detay ve alt kaynak endpoint'lerini fluent mock.when ile tanimla
+  //    (Reverse-order eslesmesi sayesinde daha spesifik rotalar genel rotalari ezer)
+  await mock.when("GET", "https://jsonplaceholder.typicode.com/posts/:id")
+    .params({ id: "1" })
+    .pattern("*://jsonplaceholder.typicode.com/*")
+    .reply(200, "../../mocks/responses/post-1.json");
+
+  await mock.when("GET", "https://jsonplaceholder.typicode.com/posts/:id/comments")
+    .params({ id: "1" })
+    .pattern("*://jsonplaceholder.typicode.com/*")
+    .reply(200, "../../mocks/responses/post-1-comments.json");
+
+  await mock.when("GET", "https://jsonplaceholder.typicode.com/albums/:id")
+    .params({ id: "1" })
+    .pattern("*://jsonplaceholder.typicode.com/*")
+    .reply(200, "../../mocks/responses/album-1.json");
+
+  await mock.when("GET", "https://jsonplaceholder.typicode.com/albums/:id/photos")
+    .params({ id: "1" })
+    .pattern("*://jsonplaceholder.typicode.com/*")
+    .reply(200, "../../mocks/responses/album-1-photos.json");
+
+  await mock.when("GET", "https://jsonplaceholder.typicode.com/users/:id")
+    .params({ id: "1" })
+    .pattern("*://jsonplaceholder.typicode.com/*")
+    .reply(200, "../../mocks/responses/user-1.json");
+
+  await mock.when("GET", "https://jsonplaceholder.typicode.com/users/:id/posts")
+    .params({ id: "1" })
+    .pattern("*://jsonplaceholder.typicode.com/*")
+    .reply(200, "../../mocks/responses/posts.json");
+
+  await mock.when("GET", "https://jsonplaceholder.typicode.com/users/:id/albums")
+    .params({ id: "1" })
+    .pattern("*://jsonplaceholder.typicode.com/*")
+    .reply(200, "../../mocks/responses/albums.json");
+
+  await mock.when("GET", "https://jsonplaceholder.typicode.com/users/:id/todos")
+    .params({ id: "1" })
+    .pattern("*://jsonplaceholder.typicode.com/*")
+    .reply(200, "../../mocks/responses/todos.json");
+
+  await mock.when("PATCH", "https://jsonplaceholder.typicode.com/todos/:id")
+    .params({ id: "2" })
+    .data({ completed: true })
+    .pattern("*://jsonplaceholder.typicode.com/*")
+    .delay(100ms)
+    .reply(200, "../../mocks/responses/todo-2-patched.json");
+
+  await mock.when("POST", "https://jsonplaceholder.typicode.com/posts")
+    .pattern("*://jsonplaceholder.typicode.com/*")
+    .reply(201, "../../mocks/responses/post-created.json");
+
+  await mock.when("DELETE", "https://jsonplaceholder.typicode.com/posts/:id")
+    .params({ id: "1" })
+    .pattern("*://jsonplaceholder.typicode.com/*")
+    .reply(200, "../../mocks/responses/empty-object.json");
+}
+
+macro open_studio(path) {
+  await setup_studio_mocks();
+  await goto("about:blank", "load", 10s);
+  await goto("${app_url}${path}", "load", 15s);
+}

@@ -1,0 +1,19 @@
+suite("JSONPlaceholder Studio - Overview and Navigation");
+import "./helpers/studio.ferrite";
+
+test "loads mocked overview data and sidebar navigation" {
+  await open_studio("/");
+
+  // Mocklanan gonderi ve kullanici verileri gorunur olmali
+  await $text("Ferrite Mock Gonderi Bir").timeout(10s).expect().visible();
+  await $text("Ada Lovelace").timeout(10s).expect().visible();
+
+  // Sidebar uzerinden Gonderiler sayfasina gecis
+  await $('a.nav__link[href="/posts"]').timeout(5s).click();
+  await $text("Ferrite Mock Gonderi Iki").timeout(10s).expect().visible();
+
+  // Sidebar uzerinden Kullanicilar sayfasina gecis
+  await $('a.nav__link[href="/users"]').timeout(5s).click();
+  await $(".user-card").timeout(10s).expect().count(2);
+  await $text("Grace Hopper").timeout(5s).expect().visible();
+}

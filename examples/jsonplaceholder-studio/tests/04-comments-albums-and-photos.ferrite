@@ -1,0 +1,36 @@
+suite("JSONPlaceholder Studio - Comments, Albums and Photos");
+import "./helpers/studio.ferrite";
+
+test "lists and filters mocked comments" {
+  await open_studio("/comments");
+
+  await $text("Mock Yorum Basligi").timeout(10s).expect().visible();
+  await $text("ada@ferrite.dev").timeout(5s).expect().visible();
+  await $text("Ferrite Mock Gonderi Bir").timeout(5s).expect().visible();
+
+  // Eslesmeyen arama ile sonucun gizlendigini dogrula
+  await $('input[type="search"]').timeout(5s).fill("olmayan-yorum");
+  await $text("Mock Yorum Basligi").timeout(5s).expect().hidden();
+
+  // Eslesen arama ile yorumun geri geldigini dogrula
+  await $('input[type="search"]').timeout(5s).fill("ada@ferrite.dev");
+  await $text("Mock Yorum Basligi").timeout(5s).expect().visible();
+}
+
+test "lists mocked albums and opens album detail photos" {
+  await open_studio("/albums");
+
+  await $text("Ferrite Mock Album").timeout(10s).expect().visible();
+
+  // /albums/:id detay sayfasina gecis
+  await $('a[href="/albums/1"]').timeout(5s).click();
+  await $text("Ferrite Mock Album").timeout(10s).expect().visible();
+  await $text("Ferrite Mock Album Detay Fotografi").timeout(10s).expect().visible();
+}
+
+test "renders mocked photos gallery" {
+  await open_studio("/photos");
+
+  await $text("Ferrite Mock Photo").timeout(10s).expect().visible();
+  await $text("Ferrite Mock Album").timeout(5s).expect().visible();
+}

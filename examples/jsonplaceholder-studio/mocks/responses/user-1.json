@@ -1,0 +1,20 @@
+{
+  "id": 1,
+  "name": "Ada Lovelace",
+  "username": "ada",
+  "email": "ada@ferrite.dev",
+  "phone": "+90 555 000 0001",
+  "website": "ferrite.dev",
+  "company": {
+    "name": "Ferrite Labs",
+    "catchPhrase": "Deterministic E2E Mocking",
+    "bs": "fast browser automation"
+  },
+  "address": {
+    "street": "Mock St",
+    "suite": "Suite 1",
+    "city": "Istanbul",
+    "zipcode": "34000",
+    "geo": { "lat": "41.0", "lng": "29.0" }
+  }
+}

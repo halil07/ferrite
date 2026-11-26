@@ -1,0 +1,14 @@
+[
+  {
+    "userId": 1,
+    "id": 1,
+    "title": "Ferrite Mock Gonderi Bir",
+    "body": "Bu icerik jsonplaceholder.typicode.com yerine yerel mock.json dosyasindan geldi."
+  },
+  {
+    "userId": 2,
+    "id": 2,
+    "title": "Ferrite Mock Gonderi Iki",
+    "body": "Alt kume eslesmesi ve saf response JSON mimarisi ile test ediliyor."
+  }
+]

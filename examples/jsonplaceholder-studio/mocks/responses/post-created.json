@@ -1,0 +1,6 @@
+{
+  "id": 101,
+  "title": "Ferrite Playground Mock Post",
+  "body": "POST /posts istegi mock.when ile 201 dondu",
+  "userId": 1
+}

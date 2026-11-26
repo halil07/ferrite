@@ -1,0 +1,44 @@
+[
+  {
+    "method": "GET",
+    "url": "https://jsonplaceholder.typicode.com/posts",
+    "pattern": "*://jsonplaceholder.typicode.com/*",
+    "status": 200,
+    "response": "./responses/posts.json"
+  },
+  {
+    "method": "GET",
+    "url": "https://jsonplaceholder.typicode.com/comments",
+    "pattern": "*://jsonplaceholder.typicode.com/*",
+    "status": 200,
+    "response": "./responses/comments.json"
+  },
+  {
+    "method": "GET",
+    "url": "https://jsonplaceholder.typicode.com/albums",
+    "pattern": "*://jsonplaceholder.typicode.com/*",
+    "status": 200,
+    "response": "./responses/albums.json"
+  },
+  {
+    "method": "GET",
+    "url": "https://jsonplaceholder.typicode.com/photos",
+    "pattern": "*://jsonplaceholder.typicode.com/*",
+    "status": 200,
+    "response": "./responses/photos.json"
+  },
+  {
+    "method": "GET",
+    "url": "https://jsonplaceholder.typicode.com/todos",
+    "pattern": "*://jsonplaceholder.typicode.com/*",
+    "status": 200,
+    "response": "./responses/todos.json"
+  },
+  {
+    "method": "GET",
+    "url": "https://jsonplaceholder.typicode.com/users",
+    "pattern": "*://jsonplaceholder.typicode.com/*",
+    "status": 200,
+    "response": "./responses/users.json"
+  }
+]
